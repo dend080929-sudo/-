@@ -118,43 +118,22 @@ def save_kyash_data(data: dict) -> None:
     save_json(KYASH_DATA_FILE, data)
 
 def load_stock_notification_data() -> dict:
-    if os.path.exists(STOCK_NOTIFICATION_DATA_FILE):
-        with open(STOCK_NOTIFICATION_DATA_FILE, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-    return {}
+    return load_json(STOCK_NOTIFICATION_DATA_FILE)
 
 def save_stock_notification_data(data: dict) -> None:
-    with open(STOCK_NOTIFICATION_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(STOCK_NOTIFICATION_DATA_FILE, data)
 
 def load_coupon_data() -> dict:
-    if os.path.exists(COUPON_DATA_FILE):
-        with open(COUPON_DATA_FILE, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-    return {}
+    return load_json(COUPON_DATA_FILE)
 
 def save_coupon_data(data: dict) -> None:
-    with open(COUPON_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(COUPON_DATA_FILE, data)
 
 def load_role_assignment_data() -> dict:
-    if os.path.exists(ROLE_ASSIGNMENT_DATA_FILE):
-        with open(ROLE_ASSIGNMENT_DATA_FILE, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-    return {}
+    return load_json(ROLE_ASSIGNMENT_DATA_FILE)
 
 def save_role_assignment_data(data: dict) -> None:
-    with open(ROLE_ASSIGNMENT_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(ROLE_ASSIGNMENT_DATA_FILE, data)
 
 # ==================== オートコンプリート関数 ====================
 
@@ -597,10 +576,10 @@ class VendingMachineCog(commands.Cog):
         panel_image="パネルの画像"
     )
     async def vm_setup(self, interaction: discord.Interaction, vending_machine_id: str, panel_title: Optional[str] = None, panel_description: Optional[str] = None, panel_image: Optional[discord.Attachment] = None):
-        await ensure_deferred(interaction, ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=False)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
-        if not vm:
+        if not vm or vm.get("owner_id") != str(interaction.user.id):
             return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
         is_custom = any([panel_title, panel_description, panel_image])
@@ -774,6 +753,12 @@ class VendingMachineCog(commands.Cog):
             try:
                 link_parts = message_link.replace("https://discord.com/channels/", "").replace("https://discordapp.com/channels/", "")
                 guild_id, channel_id, message_id = link_parts.split("/")
+
+                if int(guild_id) != interaction.guild.id:
+                    return await interaction.followup.send(
+                        "現在のサーバー以外にあるパネルは更新できません。",
+                        ephemeral=True,
+                    )
                 
                 channel = self.bot.get_channel(int(channel_id))
                 if not channel:
@@ -886,7 +871,7 @@ class VendingMachineCog(commands.Cog):
                 
                 for product in vm.get("products", []):
                     stock_file_path = product.get("stock_file")
-                    if stock_file_path and os.path.exists(stock_file_path):
+                    if stock_file_path:
                         try:
                             delete_stock_content(stock_file_path)
                         except Exception:
@@ -1983,7 +1968,7 @@ class VendingMachineCog(commands.Cog):
                 save_json(VENDING_DATA_FILE, vending_data)
                 
                 try:
-                    if os.path.exists(self.product["stock_file"]):
+                    if self.product.get("stock_file"):
                         delete_stock_content(self.product["stock_file"])
                 except:
                     pass

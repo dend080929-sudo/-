@@ -14,18 +14,10 @@ PAYPAY_DATA_FILE = "paypay_data.json"
 VENDING_DATA_FILE = "vending_data.json"
 
 def load_vending_data():
-    if os.path.exists(VENDING_DATA_FILE):
-        try:
-            with open(VENDING_DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            print(f"Error: {VENDING_DATA_FILE} のJSON形式が不正です。")
-            return {}
-    return {}
+    return load_json_store("paid_vending_items", VENDING_DATA_FILE)
 
 def save_vending_data(data):
-    with open(VENDING_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json_store("paid_vending_items", data, VENDING_DATA_FILE)
 
 def load_paypay_data():
     return load_json_store("paypay_accounts", PAYPAY_DATA_FILE)
@@ -211,6 +203,7 @@ class PaypayCog(commands.Cog):
     )
     @is_allowed()
     async def paypay_logout(self, interaction: discord.Interaction):
+        await ensure_deferred(interaction, ephemeral=True)
 
         paypay_data = load_paypay_data()
         user_id_str = str(interaction.user.id)
@@ -222,7 +215,7 @@ class PaypayCog(commands.Cog):
                 description="PayPayアカウントは登録されていません。",
                 color=discord.Color.red()
             )
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 embed=embed,
                 ephemeral=True
             )
@@ -247,7 +240,7 @@ class PaypayCog(commands.Cog):
             color=discord.Color.green()
         )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=embed,
             ephemeral=True
         )
@@ -268,6 +261,7 @@ class PaypayCog(commands.Cog):
         interaction: discord.Interaction,
         proxy_url: str
     ):
+        await ensure_deferred(interaction, ephemeral=True)
         if proxy_url.lower() == "none":
             paypayu.save_proxy("")
             embed = discord.Embed(
@@ -282,7 +276,7 @@ class PaypayCog(commands.Cog):
                     description="プロキシURLは `http://` または `https://` から開始してください。",
                     color=discord.Color.red()
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 return
 
             paypayu.save_proxy(proxy_url)
@@ -292,7 +286,7 @@ class PaypayCog(commands.Cog):
                 color=discord.Color.green()
             )
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(PaypayCog(bot))
