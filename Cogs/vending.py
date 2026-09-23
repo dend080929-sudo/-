@@ -1,6 +1,7 @@
 # vending.py (Part 1 - First half)
 from __future__ import annotations
 import discord
+from interaction_guard import ensure_deferred
 from discord.ext import commands
 from discord import app_commands, ui
 import json
@@ -27,22 +28,60 @@ COUPON_DATA_FILE = "coupon_data.json"
 ROLE_ASSIGNMENT_DATA_FILE = "role_assignment_data.json"
 USED_LINKS_FILE = "used_paypay_links.json"
 
+SHEET_STORES = {
+    VENDING_DATA_FILE: "paid_vending_items",
+    KYASH_DATA_FILE: "kyash_accounts",
+    STOCK_NOTIFICATION_DATA_FILE: "paid_stock_notifications",
+    COUPON_DATA_FILE: "paid_coupons",
+    ROLE_ASSIGNMENT_DATA_FILE: "paid_role_assignments",
+    USED_LINKS_FILE: "paid_used_paypay_links",
+}
+STOCK_CONTENT_FILE = "stock_contents.json"
+STOCK_CONTENT_SHEET = "paid_stock_contents"
+
+def read_stock_content(stock_path: str) -> str:
+    stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
+    if stock_path in stores:
+        return stores[stock_path]
+    # 旧方式のファイルが残っている場合は初回読み込み時にシートへ移行
+    if os.path.exists(stock_path):
+        try:
+            content = open(stock_path, "r", encoding="utf-8").read()
+            stores[stock_path] = content
+            save_json_store(STOCK_CONTENT_SHEET, stores, STOCK_CONTENT_FILE)
+            return content
+        except OSError:
+            pass
+    return ""
+
+def write_stock_content(stock_path: str, content: str) -> None:
+    stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
+    stores[stock_path] = content
+    save_json_store(STOCK_CONTENT_SHEET, stores, STOCK_CONTENT_FILE)
+
+def append_stock_content(stock_path: str, lines: list[str]) -> None:
+    current = read_stock_content(stock_path).strip()
+    addition = "\n".join(line.strip() for line in lines if line.strip())
+    write_stock_content(stock_path, "\n".join(part for part in (current, addition) if part))
+
+def delete_stock_content(stock_path: str) -> None:
+    stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
+    stores.pop(stock_path, None)
+    save_json_store(STOCK_CONTENT_SHEET, stores, STOCK_CONTENT_FILE)
+    try:
+        os.remove(stock_path)
+    except FileNotFoundError:
+        pass
+
 def is_link_used(link: str) -> bool:
-    if not os.path.exists(USED_LINKS_FILE): return False
-    with open(USED_LINKS_FILE, "r", encoding="utf-8") as f:
-        try: return link in json.load(f).get("used_links", [])
-        except: return False
+    return link in load_json(USED_LINKS_FILE).get("used_links", [])
 
 def add_used_link(link: str):
-    data = {"used_links": []}
-    if os.path.exists(USED_LINKS_FILE):
-        try:
-            with open(USED_LINKS_FILE, "r", encoding="utf-8") as f: data = json.load(f)
-        except: pass
+    data = load_json(USED_LINKS_FILE)
     if "used_links" not in data: data["used_links"] = []
     if link not in data["used_links"]:
         data["used_links"].append(link)
-        with open(USED_LINKS_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=4)
+        save_json(USED_LINKS_FILE, data)
 
 STOCK_DIR = "stock_files"
 os.makedirs(STOCK_DIR, exist_ok=True)
@@ -50,6 +89,9 @@ os.makedirs(STOCK_DIR, exist_ok=True)
 stock_file_path = os.path.join(STOCK_DIR, f"{uuid.uuid4()}.txt")
 
 def load_json(file_path: str) -> dict:
+    sheet_name = SHEET_STORES.get(file_path)
+    if sheet_name:
+        return load_json_store(sheet_name, file_path)
     if os.path.exists(file_path):
         with open(file_path, "r", encoding="utf-8") as f:
             try:
@@ -59,6 +101,10 @@ def load_json(file_path: str) -> dict:
     return {}
 
 def save_json(file_path: str, data: dict) -> None:
+    sheet_name = SHEET_STORES.get(file_path)
+    if sheet_name:
+        save_json_store(sheet_name, data, file_path)
+        return
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
@@ -66,17 +112,10 @@ def load_paypay_data() -> dict:
     return load_json_store("paypay_accounts", PAYPAY_DATA_FILE)
 
 def load_kyash_data() -> dict:
-    if os.path.exists(KYASH_DATA_FILE):
-        with open(KYASH_DATA_FILE, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return {}
-    return {}
+    return load_json(KYASH_DATA_FILE)
 
 def save_kyash_data(data: dict) -> None:
-    with open(KYASH_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(KYASH_DATA_FILE, data)
 
 def load_stock_notification_data() -> dict:
     if os.path.exists(STOCK_NOTIFICATION_DATA_FILE):
@@ -183,7 +222,7 @@ async def handle_error(interaction: discord.Interaction, error: Exception, ephem
             color=discord.Color.red(),
             timestamp=discord.utils.utcnow()
         )
-        embed.set_footer(text="developer@ramune_123")
+        embed.set_footer(text="developer@_Avel")
         
         if interaction.response.is_done():
             await interaction.followup.send(embed=embed, ephemeral=ephemeral)
@@ -198,7 +237,7 @@ async def check_stock(interaction: discord.Interaction, products: list) -> None:
         color=discord.Color.blue(),
         timestamp=discord.utils.utcnow()
     )
-    embed.set_footer(text="developer@ramune_123")
+    embed.set_footer(text="developer@_Avel")
 
     if not products:
         embed.description = "この自販機には商品が登録されていません。"
@@ -227,16 +266,14 @@ async def check_stock(interaction: discord.Interaction, products: list) -> None:
                 continue
                 
             try:
-                with open(stock_file, "r", encoding="utf-8") as file:
-                    lines = [line for line in file.readlines() if line.strip()]
-                    stock_count = len(lines)
-                    embed.add_field(
-                        name=f"{product_name}", 
-                        value=f"```在庫数: {stock_count}個\n販売数: {sales_count}個```", 
-                        inline=False
-                    )
-
-            except FileNotFoundError:
+                lines = [line for line in read_stock_content(stock_file).splitlines() if line.strip()]
+                stock_count = len(lines)
+                embed.add_field(
+                    name=f"{product_name}",
+                    value=f"```在庫数: {stock_count}個\n販売数: {sales_count}個```",
+                    inline=False
+                )
+            except Exception:
                 embed.add_field(
                     name=f"{product_name}", 
                     value=f"```在庫数: 0個\n販売数: {sales_count}個```", 
@@ -392,6 +429,7 @@ class VendingMachineCog(commands.Cog):
     @is_allowed()
     @app_commands.describe(name="自販機の名前")
     async def vm_create(self, interaction: discord.Interaction, name: str):
+        await ensure_deferred(interaction, ephemeral=True)
         user_id = str(interaction.user.id)
         vending_data = load_json(VENDING_DATA_FILE)
         new_vm_id = str(uuid.uuid4())
@@ -420,31 +458,33 @@ class VendingMachineCog(commands.Cog):
         if not kyash_id:
             msg_parts.append("Kyashアカウントが未登録です。`/kyash登録` を実行してください。")
         
-        await interaction.response.send_message("\n".join(msg_parts), ephemeral=True)
+        await interaction.followup.send("\n".join(msg_parts), ephemeral=True)
 
     @app_commands.command(name="有料公開ログ設定", description="全サーバー共通の公開販売ログを送信するチャンネルを設定します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", channel="ログを集約するチャンネル")
     async def vm_set_log(self, interaction: discord.Interaction, vending_machine_id: str, channel: discord.TextChannel):
+        await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
         
         vm["log_channel_id"] = channel.id
         save_json(VENDING_DATA_FILE, vending_data)
-        await interaction.response.send_message(f"自販機「{vm['name']}」のログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
+        await interaction.followup.send(f"自販機「{vm['name']}」のログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
 
     @app_commands.command(name="有料購入ログ設定", description="このサーバー内での購入ログを送信するチャンネルを設定します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", channel="このサーバー用のログチャンネル")
     async def vm_set_local_log(self, interaction: discord.Interaction, vending_machine_id: str, channel: discord.TextChannel):
+        await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
         
         if "server_logs" not in vm:
             vm["server_logs"] = {}
@@ -452,22 +492,23 @@ class VendingMachineCog(commands.Cog):
         vm["server_logs"][str(interaction.guild.id)] = channel.id
         
         save_json(VENDING_DATA_FILE, vending_data)
-        await interaction.response.send_message(f"このサーバーでの購入ログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
+        await interaction.followup.send(f"このサーバーでの購入ログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
 
     @app_commands.command(name="有料非公開ログ設定", description="非公開販売ログを送信するチャンネルを設定します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", channel="ログを送信するチャンネル")
     async def vm_set_private_log(self, interaction: discord.Interaction, vending_machine_id: str, channel: discord.TextChannel):
+        await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
         
         vm["private_log_channel_id"] = channel.id
         save_json(VENDING_DATA_FILE, vending_data)
         
-        await interaction.response.send_message(f"自販機「{vm['name']}」の非公開ログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
+        await interaction.followup.send(f"自販機「{vm['name']}」の非公開ログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
 
     @app_commands.command(name="有料商品追加", description="指定した自販機に新しい商品を追加します")
     @is_allowed()
@@ -490,15 +531,15 @@ class VendingMachineCog(commands.Cog):
         description: Optional[str] = None, 
         emoji: Optional[str] = None
     ):
+        await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
         product_id = str(uuid.uuid4())
         stock_file_path = os.path.join(STOCK_DIR_BASE, f"{product_id}.txt")
-        with open(stock_file_path, "w", encoding="utf-8") as f:
-            pass
+        write_stock_content(stock_file_path, "")
 
         new_product = {
             "product_id": product_id,
@@ -514,7 +555,7 @@ class VendingMachineCog(commands.Cog):
         }
         vm["products"].append(new_product)
         save_json(VENDING_DATA_FILE, vending_data)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"自販機「{vm['name']}」に商品「{name}」を追加しました。\n"
             f"PayPay: {price_paypay}円 | Kyash: {price_kyash}円",
             ephemeral=True
@@ -530,20 +571,21 @@ class VendingMachineCog(commands.Cog):
     ])
     async def vm_add_stock(self, interaction: discord.Interaction, vending_machine_id: str, stock_type: str, stock_file: Optional[discord.Attachment] = None):
         
+        await ensure_deferred(interaction, ephemeral=True)
         if stock_file and not stock_file.filename.endswith(".txt"):
-            return await interaction.response.send_message("ファイル形式は.txtのみ対応しています。", ephemeral=True)
+            return await interaction.followup.send("ファイル形式は.txtのみ対応しています。", ephemeral=True)
 
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
         products = vm.get("products")
         if not products:
-            return await interaction.response.send_message("在庫を追加できる商品がありません。", ephemeral=True)
+            return await interaction.followup.send("在庫を追加できる商品がありません。", ephemeral=True)
         
         view = VendingMachineCog.ProductSelectViewForStock(products, stock_file, stock_type)
-        await interaction.response.send_message("在庫追加を行う商品を選択してください:", view=view, ephemeral=True)
+        await interaction.followup.send("在庫追加を行う商品を選択してください:", view=view, ephemeral=True)
 
     @app_commands.command(name="有料自販機設置", description="自販機パネルを設置します")
     @is_allowed()
@@ -555,10 +597,11 @@ class VendingMachineCog(commands.Cog):
         panel_image="パネルの画像"
     )
     async def vm_setup(self, interaction: discord.Interaction, vending_machine_id: str, panel_title: Optional[str] = None, panel_description: Optional[str] = None, panel_image: Optional[discord.Attachment] = None):
+        await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm:
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
         is_custom = any([panel_title, panel_description, panel_image])
         
@@ -572,7 +615,7 @@ class VendingMachineCog(commands.Cog):
         else:
             embed = discord.Embed(title="自販機", description="購入したい商品を下のメニューから選択してください。", color=discord.Color.green())
         
-        embed.set_footer(text="developer@ramune_123")
+        embed.set_footer(text="developer@_Avel")
         
         products = vm.get("products", [])
         if products:
@@ -595,92 +638,97 @@ class VendingMachineCog(commands.Cog):
                 embed.description = "```現在、販売中の商品はありません。```"
 
         view = VendingMachineCog.VendingMachineView(vending_machine_id, self.bot)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
     @app_commands.command(name="有料在庫引出", description="商品の在庫を引き出します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", quantity="数量")
     async def vm_withdraw_stock(self, interaction: discord.Interaction, vending_machine_id: str, quantity: int):
+        await ensure_deferred(interaction, ephemeral=True)
         if quantity <= 0:
-            return await interaction.response.send_message("引出数量は1以上で指定してください。", ephemeral=True)
+            return await interaction.followup.send("引出数量は1以上で指定してください。", ephemeral=True)
 
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
         products = vm.get("products")
         if not products:
-            return await interaction.response.send_message("引出できる商品がありません。", ephemeral=True)
+            return await interaction.followup.send("引出できる商品がありません。", ephemeral=True)
         
         view = VendingMachineCog.WithdrawStockView(products, quantity)
-        await interaction.response.send_message("在庫引出を行う商品を選択してください:", view=view, ephemeral=True)
+        await interaction.followup.send("在庫引出を行う商品を選択してください:", view=view, ephemeral=True)
 
     @app_commands.command(name="有料在庫内容確認", description="商品の在庫内容を確認します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機")
     async def vm_check_stock_content(self, interaction: discord.Interaction, vending_machine_id: str):
+        await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
         products = vm.get("products")
         if not products:
-            return await interaction.response.send_message("内容を確認できる商品がありません。", ephemeral=True)
+            return await interaction.followup.send("内容を確認できる商品がありません。", ephemeral=True)
         
         view = VendingMachineCog.ContentView(products)
-        await interaction.response.send_message("在庫内容確認を行う商品を選択してください:", view=view, ephemeral=True)
+        await interaction.followup.send("在庫内容確認を行う商品を選択してください:", view=view, ephemeral=True)
 
     @app_commands.command(name="有料商品削除", description="自販機から商品を完全に削除します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機")
     async def vm_delete_product(self, interaction: discord.Interaction, vending_machine_id: str):
+        await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
         products = vm.get("products")
         if not products:
-            return await interaction.response.send_message("削除できる商品がありません。", ephemeral=True)
+            return await interaction.followup.send("削除できる商品がありません。", ephemeral=True)
         
         view = ui.View(timeout=None)
         view.add_item(VendingMachineCog.ProductSelectForDelete(products))
         
-        await interaction.response.send_message("削除する商品を選択してください:", view=view, ephemeral=True)
+        await interaction.followup.send("削除する商品を選択してください:", view=view, ephemeral=True)
 
     @app_commands.command(name="有料商品情報変更", description="商品の各情報を変更します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機")
     async def vm_edit_product(self, interaction: discord.Interaction, vending_machine_id: str):
+        await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
         vm = vending_data.get(vending_machine_id)
         if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
         products = vm.get("products")
         if not products:
-            return await interaction.response.send_message("情報を変更できる商品がありません。", ephemeral=True)
+            return await interaction.followup.send("情報を変更できる商品がありません。", ephemeral=True)
         
         view = VendingMachineCog.EditProductView(products, vending_machine_id)
-        await interaction.response.send_message("情報を変更する商品を選択してください:", view=view, ephemeral=True)
+        await interaction.followup.send("情報を変更する商品を選択してください:", view=view, ephemeral=True)
 
     @app_commands.command(name="有料自販機削除", description="自販機を完全に削除します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="削除する自販機")
     async def vm_delete(self, interaction: discord.Interaction, vending_machine_id: str):
+        await ensure_deferred(interaction, ephemeral=True)
         try:
             vending_data = load_json(VENDING_DATA_FILE)
             vm = vending_data.get(vending_machine_id)
 
             if not vm or vm.get("owner_id") != str(interaction.user.id):
-                return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+                return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
             
             vm_name = vm.get("name", "名称不明")
             
@@ -692,9 +740,9 @@ class VendingMachineCog(commands.Cog):
                 color=discord.Color.red(),
                 timestamp=discord.utils.utcnow()
             )
-            embed.set_footer(text="developer@ramune_123")
+            embed.set_footer(text="developer@_Avel")
             
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         except Exception as e:
             await handle_error(interaction, e)
     
@@ -709,7 +757,7 @@ class VendingMachineCog(commands.Cog):
         panel_image="パネルの画像"
     )
     async def vm_update(self, interaction: discord.Interaction, vending_machine_id: str, message_link: str, panel_title: Optional[str] = None, panel_description: Optional[str] = None, panel_image: Optional[discord.Attachment] = None):
-        await interaction.response.defer(ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
         
         try:
             vending_data = load_json(VENDING_DATA_FILE)
@@ -720,7 +768,7 @@ class VendingMachineCog(commands.Cog):
                     description="指定された自販機が見つかりません。",
                     color=discord.Color.red()
                 )
-                embed.set_footer(text="developer@ramune_123")
+                embed.set_footer(text="developer@_Avel")
                 return await interaction.followup.send(embed=embed, ephemeral=True)
             
             try:
@@ -734,7 +782,7 @@ class VendingMachineCog(commands.Cog):
                         description="指定されたチャンネルが見つかりません。",
                         color=discord.Color.red()
                     )
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     return await interaction.followup.send(embed=embed, ephemeral=True)
                 
                 message = await channel.fetch_message(int(message_id))
@@ -744,7 +792,7 @@ class VendingMachineCog(commands.Cog):
                         description="指定されたメッセージが見つかりません。",
                         color=discord.Color.red()
                     )
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     return await interaction.followup.send(embed=embed, ephemeral=True)
                 
                 if message.author.id != self.bot.user.id:
@@ -753,7 +801,7 @@ class VendingMachineCog(commands.Cog):
                         description="指定されたメッセージはBOTが送信したものではありません。",
                         color=discord.Color.red()
                     )
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     return await interaction.followup.send(embed=embed, ephemeral=True)
                 
             except (ValueError, IndexError):
@@ -762,7 +810,7 @@ class VendingMachineCog(commands.Cog):
                     description="メッセージリンクの形式が正しくありません。",
                     color=discord.Color.red()
                 )
-                embed.set_footer(text="developer@ramune_123")
+                embed.set_footer(text="developer@_Avel")
                 return await interaction.followup.send(embed=embed, ephemeral=True)
             
             is_custom = any([panel_title, panel_description, panel_image])
@@ -781,7 +829,7 @@ class VendingMachineCog(commands.Cog):
                     color=discord.Color.green()
                 )
             
-            embed.set_footer(text="developer@ramune_123")
+            embed.set_footer(text="developer@_Avel")
             
             products = vm.get("products", [])
             if products:
@@ -812,7 +860,7 @@ class VendingMachineCog(commands.Cog):
                 description=f"自販機「{vm['name']}」のパネルを更新しました。",
                 color=discord.Color.green()
             )
-            embed_success.set_footer(text="developer@ramune_123")
+            embed_success.set_footer(text="developer@_Avel")
             await interaction.followup.send(embed=embed_success, ephemeral=True)
             
         except Exception as e:
@@ -828,7 +876,7 @@ class VendingMachineCog(commands.Cog):
 
         @ui.button(label="削除する", style=discord.ButtonStyle.danger)
         async def confirm_delete(self, interaction: discord.Interaction, button: ui.Button):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 vending_data = load_json(VENDING_DATA_FILE)
                 vm = vending_data.get(self.vending_machine_id)
@@ -840,7 +888,7 @@ class VendingMachineCog(commands.Cog):
                     stock_file_path = product.get("stock_file")
                     if stock_file_path and os.path.exists(stock_file_path):
                         try:
-                            os.remove(stock_file_path)
+                            delete_stock_content(stock_file_path)
                         except Exception:
                             pass
 
@@ -853,7 +901,7 @@ class VendingMachineCog(commands.Cog):
                     color=discord.Color.green(),
                     timestamp=discord.utils.utcnow()
                 )
-                embed.set_footer(text="developer@ramune_123")
+                embed.set_footer(text="developer@_Avel")
                 
                 await interaction.followup.send(embed=embed, ephemeral=True)
             except Exception as e:
@@ -867,7 +915,7 @@ class VendingMachineCog(commands.Cog):
                 color=discord.Color.blue(),
                 timestamp=discord.utils.utcnow()
             )
-            embed.set_footer(text="developer@ramune_123")
+            embed.set_footer(text="developer@_Avel")
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
     class PaymentMethodSelect(ui.Select):
@@ -994,7 +1042,7 @@ class VendingMachineCog(commands.Cog):
             else:
                 embed.add_field(name="金額", value=f"```{final_price}円```", inline=False)
             
-            embed.set_footer(text="developer@ramune_123")
+            embed.set_footer(text="developer@_Avel")
             
             view = VendingMachineCog.PurchaseConfirmView(
                 self.vending_machine_id,
@@ -1041,7 +1089,7 @@ class VendingMachineCog(commands.Cog):
                 await interaction.response.send_modal(modal)
 
         async def process_purchase(self, interaction: discord.Interaction, link: Optional[str]):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             
             try:
                 vending_data = load_json(VENDING_DATA_FILE)
@@ -1053,7 +1101,7 @@ class VendingMachineCog(commands.Cog):
                         description="この自販機は削除されているか、データが不正です。",
                         color=discord.Color.red()
                     )
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     return await interaction.followup.send(embed=embed, ephemeral=True)
                 
                 if self.final_price > 0:
@@ -1176,19 +1224,16 @@ class VendingMachineCog(commands.Cog):
                     purchased_content = f"```\n{self.product.get('infinite_content', '')}\n```"
                     purchased_content_text = self.product.get('infinite_content', '')
                 else:
-                    with open(self.product["stock_file"], "r+", encoding="utf-8") as file:
-                        lines = [line for line in file.readlines() if line.strip()]
-                        if len(lines) < self.quantity:
-                            return await interaction.followup.send(
-                                f"在庫が不足しています。\n必要数: {self.quantity}個\n現在の在庫: {len(lines)}個",
-                                ephemeral=True
-                            )
-                        
-                        purchased_items = lines[:self.quantity]
-                        remaining_items = lines[self.quantity:]
-                        file.seek(0)
-                        file.truncate()
-                        file.write("\n".join(remaining_items))
+                    lines = [line for line in read_stock_content(self.product["stock_file"]).splitlines() if line.strip()]
+                    if len(lines) < self.quantity:
+                        return await interaction.followup.send(
+                            f"在庫が不足しています。\n必要数: {self.quantity}個\n現在の在庫: {len(lines)}個",
+                            ephemeral=True
+                        )
+
+                    purchased_items = lines[:self.quantity]
+                    remaining_items = lines[self.quantity:]
+                    write_stock_content(self.product["stock_file"], "\n".join(remaining_items))
                     
                     purchased_content = f"```\n{''.join(purchased_items).strip()}\n```"
                     purchased_content_text = ''.join(purchased_items).strip()
@@ -1202,7 +1247,7 @@ class VendingMachineCog(commands.Cog):
                     timestamp=discord.utils.utcnow()
                 )
                 embed.add_field(name="購入した商品", value=purchased_content, inline=False)
-                embed.set_footer(text="developer@ramune_123")
+                embed.set_footer(text="developer@_Avel")
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 
                 vending_data = load_json(VENDING_DATA_FILE)
@@ -1238,7 +1283,7 @@ class VendingMachineCog(commands.Cog):
                     dm_embed.add_field(name="購入数", value=f"```{self.quantity}個```", inline=True)
                     dm_embed.add_field(name="支払金額", value=f"```{price_display}```", inline=True)
                     dm_embed.add_field(name="決済方法", value=f"```{self.payment_method.upper()}```", inline=True)
-                    dm_embed.set_footer(text="developer@ramune_123")
+                    dm_embed.set_footer(text="developer@_Avel")
                     await interaction.user.send(purchased_content_text, embed=dm_embed)
                 except:
                     pass
@@ -1252,7 +1297,7 @@ class VendingMachineCog(commands.Cog):
                     emb.add_field(name="購入サーバー", value=f"```{interaction.guild.name}```", inline=True)
                     emb.add_field(name="購入者", value=f"{interaction.user.mention}({interaction.user.id})", inline=True)
                     emb.add_field(name="決済方法", value=f"```{self.payment_method.upper()}```", inline=True)
-                    emb.set_footer(text="developer@ramune_123")
+                    emb.set_footer(text="developer@_Avel")
                     return emb
 
                 log_embed_obj = None
@@ -1288,7 +1333,7 @@ class VendingMachineCog(commands.Cog):
                             private_log_embed.add_field(name="支払金額", value=f"```{price_display}```", inline=True)
                             private_log_embed.add_field(name="決済方法", value=f"```{self.payment_method.upper()}```", inline=True)
                             private_log_embed.add_field(name="自販機", value=f"```{vm['name']}```", inline=True)
-                            private_log_embed.set_footer(text="developer@ramune_123")
+                            private_log_embed.set_footer(text="developer@_Avel")
                             
                             discord_file = discord.File(
                                 io.BytesIO(purchased_content_text.encode('utf-8')),
@@ -1397,12 +1442,8 @@ class VendingMachineCog(commands.Cog):
                     if product.get("infinite_stock"):
                         description = f"価格: {price}円│在庫数: ∞個│販売数: {sales_count}個"
                     else:
-                        try:
-                            with open(product.get("stock_file", ""), "r", encoding="utf-8") as f:
-                                lines = [line for line in f.readlines() if line.strip()]
-                                stock_count = len(lines)
-                        except:
-                            stock_count = 0
+                        lines = [line for line in read_stock_content(product.get("stock_file", "")).splitlines() if line.strip()]
+                        stock_count = len(lines)
                         
                         description = f"価格: {price}円│在庫数: {stock_count}個│販売数: {sales_count}個"
                     
@@ -1435,7 +1476,7 @@ class VendingMachineCog(commands.Cog):
                         description="この自販機は削除されているか、存在しません。",
                         color=discord.Color.red()
                     )
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     return await interaction.response.send_message(embed=embed, ephemeral=True)
                 
                 products = vm.get("products", [])
@@ -1452,24 +1493,14 @@ class VendingMachineCog(commands.Cog):
                     )
                     await interaction.response.send_modal(modal)
                 else:
-                    try:
-                        with open(product.get("stock_file", ""), "r", encoding="utf-8") as f:
-                            lines = [line for line in f.readlines() if line.strip()]
-                            if len(lines) == 0:
-                                embed = discord.Embed(
-                                    title="在庫不足",
-                                    description=f"現在 {product['name']}の在庫が不足しています。",
-                                    color=discord.Color.orange()
-                                )
-                                embed.set_footer(text="developer@ramune_123")
-                                return await interaction.response.send_message(embed=embed, ephemeral=True)
-                    except:
+                    lines = [line for line in read_stock_content(product.get("stock_file", "")).splitlines() if line.strip()]
+                    if len(lines) == 0:
                         embed = discord.Embed(
                             title="在庫不足",
                             description=f"現在 {product['name']}の在庫が不足しています。",
                             color=discord.Color.orange()
                         )
-                        embed.set_footer(text="developer@ramune_123")
+                        embed.set_footer(text="developer@_Avel")
                         return await interaction.response.send_message(embed=embed, ephemeral=True)
                     
                     modal = VendingMachineCog.CouponModal(
@@ -1530,11 +1561,11 @@ class VendingMachineCog(commands.Cog):
                         description="この自販機は削除されているか、存在しません。",
                         color=discord.Color.red()
                     )
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     return await interaction.response.send_message(embed=embed, ephemeral=True)
                 
                 products = vm.get("products", [])
-                await interaction.response.defer(ephemeral=True)
+                await ensure_deferred(interaction, ephemeral=True)
                 await check_stock(interaction, products)
             except Exception as e:
                 await handle_error(interaction, e)
@@ -1572,7 +1603,7 @@ class VendingMachineCog(commands.Cog):
 
                 if self.stock_type == "infinite":
                     if self.attachment:
-                        await interaction.response.defer(ephemeral=True)
+                        await ensure_deferred(interaction, ephemeral=True)
                         try:
                             new_stock_content = await self.attachment.read()
                             infinite_content = new_stock_content.decode('utf-8').strip()
@@ -1594,14 +1625,11 @@ class VendingMachineCog(commands.Cog):
                         await interaction.response.send_modal(modal)
                 else:
                     if self.attachment:
-                        await interaction.response.defer(ephemeral=True)
+                        await ensure_deferred(interaction, ephemeral=True)
                         try:
                             new_stock_content = await self.attachment.read()
                             new_stock_lines = [line for line in new_stock_content.decode('utf-8').splitlines() if line.strip()]
-                            with open(product["stock_file"], "a", encoding="utf-8") as f:
-                                if os.path.getsize(product["stock_file"]) > 0: 
-                                    f.write("\n")
-                                f.write("\n".join(new_stock_lines))
+                            append_stock_content(product["stock_file"], new_stock_lines)
                             
                             await interaction.followup.send(f"商品「{product['name']}」に`{len(new_stock_lines)}`個の在庫を追加しました。", ephemeral=True)
                             
@@ -1644,7 +1672,7 @@ class VendingMachineCog(commands.Cog):
                         )
                         embed.add_field(name="追加商品", value=f"```{product['name']}```", inline=True)
                         embed.add_field(name="追加数", value=f"```{added_count}個```", inline=True)
-                        embed.set_footer(text="developer@ramune_123")
+                        embed.set_footer(text="developer@_Avel")
                         
                         await channel.send(f"{role.mention}", embed=embed)
                         
@@ -1664,14 +1692,11 @@ class VendingMachineCog(commands.Cog):
         )
 
         async def on_submit(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 new_stock_lines = [line for line in self.stock_input.value.splitlines() if line.strip()]
                 
-                with open(self.product["stock_file"], "a", encoding="utf-8") as f:
-                    if os.path.getsize(self.product["stock_file"]) > 0: 
-                        f.write("\n")
-                    f.write("\n".join(new_stock_lines))
+                append_stock_content(self.product["stock_file"], new_stock_lines)
                 
                 await interaction.followup.send(f"商品「{self.product['name']}」に`{len(new_stock_lines)}`個の在庫を追加しました。", ephemeral=True)
                 
@@ -1713,7 +1738,7 @@ class VendingMachineCog(commands.Cog):
                         )
                         embed.add_field(name="追加商品", value=f"```{product['name']}```", inline=True)
                         embed.add_field(name="追加数", value=f"```{added_count}個```", inline=True)
-                        embed.set_footer(text="developer@ramune_123")
+                        embed.set_footer(text="developer@_Avel")
                         
                         await channel.send(f"{role.mention}", embed=embed)
                         
@@ -1733,7 +1758,7 @@ class VendingMachineCog(commands.Cog):
         )
 
         async def on_submit(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 infinite_content = self.stock_input.value.strip()
                 
@@ -1770,7 +1795,7 @@ class VendingMachineCog(commands.Cog):
             )
 
         async def callback(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 product = next((p for p in self.products if p["product_id"] == self.values[0]), None)
                 if not product:
@@ -1798,27 +1823,22 @@ class VendingMachineCog(commands.Cog):
                         timestamp=discord.utils.utcnow()
                     )
                     embed.add_field(name="引き出した無限在庫", value=withdrawn_content, inline=False)
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     
                     await interaction.followup.send(embed=embed, ephemeral=True)
                 else:
                     try:
-                        with open(product["stock_file"], "r+", encoding="utf-8") as file:
-                            lines = [line for line in file.readlines() if line.strip()]
-                            
-                            if len(lines) < self.quantity:
-                                await interaction.followup.send(
-                                    f"在庫が不足しています。\n引出希望数: {self.quantity}個\n現在の在庫: {len(lines)}個",
-                                    ephemeral=True
-                                )
-                                return
-                            
-                            withdrawn_items = lines[:self.quantity]
-                            remaining_items = lines[self.quantity:]
-                            
-                            file.seek(0)
-                            file.truncate()
-                            file.write("\n".join(remaining_items))
+                        lines = [line for line in read_stock_content(product["stock_file"]).splitlines() if line.strip()]
+                        if len(lines) < self.quantity:
+                            await interaction.followup.send(
+                                f"在庫が不足しています。\n引出希望数: {self.quantity}個\n現在の在庫: {len(lines)}個",
+                                ephemeral=True
+                            )
+                            return
+
+                        withdrawn_items = lines[:self.quantity]
+                        remaining_items = lines[self.quantity:]
+                        write_stock_content(product["stock_file"], "\n".join(remaining_items))
                         
                         withdrawn_content = f"`{''.join(withdrawn_items).strip()}\n`"
                         
@@ -1829,7 +1849,7 @@ class VendingMachineCog(commands.Cog):
                             timestamp=discord.utils.utcnow()
                         )
                         embed.add_field(name="引き出した在庫", value=withdrawn_content, inline=False)
-                        embed.set_footer(text="developer@ramune_123")
+                        embed.set_footer(text="developer@_Avel")
                         
                         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -1856,7 +1876,7 @@ class VendingMachineCog(commands.Cog):
             )
 
         async def callback(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 product = next((p for p in self.products if p["product_id"] == self.values[0]), None)
                 if not product:
@@ -1874,35 +1894,34 @@ class VendingMachineCog(commands.Cog):
                         timestamp=discord.utils.utcnow()
                     )
                     embed.add_field(name="無限在庫内容", value=stock_content, inline=False)
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     await interaction.followup.send(embed=embed, ephemeral=True)
                 else:
                     try:
-                        with open(product["stock_file"], "r", encoding="utf-8") as file:
-                            content = file.read().strip()
-                            
-                            if not content:
-                                embed = discord.Embed(
-                                    title="在庫内容",
-                                    description=f"**商品:** `{product['name']}`\n**在庫数:** `0`個",
-                                    color=discord.Color.blue(),
-                                    timestamp=discord.utils.utcnow()
-                                )
-                                embed.add_field(name="在庫内容", value="```\n在庫がありません\n```", inline=False)
-                            else:
-                                lines = [line for line in content.splitlines() if line.strip()]
-                                stock_content = f"`{content}`\n"
-                                
-                                embed = discord.Embed(
-                                    title="在庫内容",
-                                    description=f"**商品:** `{product['name']}`\n**在庫数:** `{len(lines)}`個",
-                                    color=discord.Color.blue(),
-                                    timestamp=discord.utils.utcnow()
-                                )
-                                embed.add_field(name="在庫内容", value=stock_content, inline=False)
-                            
-                            embed.set_footer(text="developer@ramune_123")
-                            await interaction.followup.send(embed=embed, ephemeral=True)
+                        content = read_stock_content(product["stock_file"]).strip()
+
+                        if not content:
+                            embed = discord.Embed(
+                                title="在庫内容",
+                                description=f"**商品:** `{product['name']}`\n**在庫数:** `0`個",
+                                color=discord.Color.blue(),
+                                timestamp=discord.utils.utcnow()
+                            )
+                            embed.add_field(name="在庫内容", value="```\n在庫がありません\n```", inline=False)
+                        else:
+                            lines = [line for line in content.splitlines() if line.strip()]
+                            stock_content = f"`{content}`\n"
+
+                            embed = discord.Embed(
+                                title="在庫内容",
+                                description=f"**商品:** `{product['name']}`\n**在庫数:** `{len(lines)}`個",
+                                color=discord.Color.blue(),
+                                timestamp=discord.utils.utcnow()
+                            )
+                            embed.add_field(name="在庫内容", value=stock_content, inline=False)
+
+                        embed.set_footer(text="developer@_Avel")
+                        await interaction.followup.send(embed=embed, ephemeral=True)
 
                     except FileNotFoundError:
                         await handle_error(interaction, FileNotFoundError("在庫ファイルが見つかりません。"))
@@ -1922,7 +1941,7 @@ class VendingMachineCog(commands.Cog):
             )
 
         async def callback(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 product = next((p for p in self.products if p["product_id"] == self.values[0]), None)
                 if not product:
@@ -1935,7 +1954,7 @@ class VendingMachineCog(commands.Cog):
                     description=f"本当に商品「{product['name']}」を削除しますか？\n\n**この操作は取り消せません。**",
                     color=discord.Color.red()
                 )
-                embed.set_footer(text="developer@ramune_123")
+                embed.set_footer(text="developer@_Avel")
                 await interaction.followup.send(embed=embed, view=view, ephemeral=True)
             except Exception as e:
                 await handle_error(interaction, e)
@@ -1953,7 +1972,7 @@ class VendingMachineCog(commands.Cog):
 
         @ui.button(label="削除する", style=discord.ButtonStyle.danger)
         async def confirm_delete(self, interaction: discord.Interaction, button: ui.Button):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 vending_data = load_json(VENDING_DATA_FILE)
                 for vm_id, vm_data in vending_data.items():
@@ -1965,7 +1984,7 @@ class VendingMachineCog(commands.Cog):
                 
                 try:
                     if os.path.exists(self.product["stock_file"]):
-                        os.remove(self.product["stock_file"])
+                        delete_stock_content(self.product["stock_file"])
                 except:
                     pass
                 
@@ -1974,7 +1993,7 @@ class VendingMachineCog(commands.Cog):
                     description=f"商品「{self.product['name']}」を削除しました。",
                     color=discord.Color.green()
                 )
-                embed.set_footer(text="developer@ramune_123")
+                embed.set_footer(text="developer@_Avel")
                 await interaction.followup.send(embed=embed, ephemeral=True)
             except Exception as e:
                 await handle_error(interaction, e)
@@ -1982,7 +2001,7 @@ class VendingMachineCog(commands.Cog):
         @ui.button(label="キャンセル", style=discord.ButtonStyle.secondary)
         async def cancel_delete(self, interaction: discord.Interaction, button: ui.Button):
             embed = discord.Embed(title="キャンセル", description="商品削除をキャンセルしました。", color=discord.Color.blue())
-            embed.set_footer(text="developer@ramune_123")
+            embed.set_footer(text="developer@_Avel")
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
     class EditProductView(ui.View):
@@ -2031,7 +2050,7 @@ class VendingMachineCog(commands.Cog):
             self.emoji_input.default = product.get("emoji", "")
 
         async def on_submit(self, interaction: discord.Interaction):
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 vending_data = load_json(VENDING_DATA_FILE)
                 updated_fields = []
@@ -2078,7 +2097,7 @@ class VendingMachineCog(commands.Cog):
                         description=f"商品「{self.product['name']}」を更新しました:\n• " + "\n• ".join(updated_fields),
                         color=discord.Color.green()
                     )
-                    embed.set_footer(text="developer@ramune_123")
+                    embed.set_footer(text="developer@_Avel")
                     await interaction.followup.send(embed=embed, ephemeral=True)
                 else:
                     await interaction.followup.send("更新する項目が入力されていません。", ephemeral=True)
@@ -2090,7 +2109,7 @@ class VendingMachineCog(commands.Cog):
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="通知設定する自販機", channel="通知を送信するチャンネル", role="メンションするロール")
     async def stock_notification_setup(self, interaction: discord.Interaction, vending_machine_id: str, channel: discord.TextChannel, role: discord.Role):
-        await interaction.response.defer(ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
         try:
             vending_data = load_json(VENDING_DATA_FILE)
             vm = vending_data.get(vending_machine_id)
@@ -2108,7 +2127,7 @@ class VendingMachineCog(commands.Cog):
             embed = discord.Embed(title="在庫追加通知設定", description=f"自販機「{vm['name']}」の在庫追加通知を設定しました。", color=discord.Color.green())
             embed.add_field(name="通知チャンネル", value=channel.mention, inline=True)
             embed.add_field(name="メンションロール", value=role.mention, inline=True)
-            embed.set_footer(text="developer@ramune_123")
+            embed.set_footer(text="developer@_Avel")
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
             await handle_error(interaction, e)
@@ -2117,7 +2136,7 @@ class VendingMachineCog(commands.Cog):
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     async def stock_notification_remove(self, interaction: discord.Interaction, vending_machine_id: str):
-        await interaction.response.defer(ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
         try:
             vending_data = load_json(VENDING_DATA_FILE)
             vm = vending_data.get(vending_machine_id)
@@ -2138,18 +2157,19 @@ class VendingMachineCog(commands.Cog):
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     async def vm_create_coupon(self, interaction: discord.Interaction, vending_machine_id: str, coupon_code: str, discount: int):
+        await ensure_deferred(interaction, ephemeral=True)
         try:
             if discount <= 0:
-                return await interaction.response.send_message("割引金額は1円以上で指定してください。", ephemeral=True)
+                return await interaction.followup.send("割引金額は1円以上で指定してください。", ephemeral=True)
             
             vending_data = load_json(VENDING_DATA_FILE)
             vm = vending_data.get(vending_machine_id)
             if not vm or vm.get("owner_id") != str(interaction.user.id):
-                return await interaction.response.send_message("指定された自販機が見つかりません。", ephemeral=True)
+                return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
             
             coupon_data = load_coupon_data()
             if coupon_code in coupon_data:
-                return await interaction.response.send_message("そのコードは既に存在します。", ephemeral=True)
+                return await interaction.followup.send("そのコードは既に存在します。", ephemeral=True)
             
             coupon_data[coupon_code] = {
                 "discount": discount,
@@ -2158,7 +2178,7 @@ class VendingMachineCog(commands.Cog):
                 "created_at": str(discord.utils.utcnow())
             }
             save_coupon_data(coupon_data)
-            await interaction.response.send_message(f"クーポン「{coupon_code}」を作成しました。", ephemeral=True)
+            await interaction.followup.send(f"クーポン「{coupon_code}」を作成しました。", ephemeral=True)
         except Exception as e:
             await handle_error(interaction, e)
 
@@ -2172,11 +2192,12 @@ class VendingMachineCog(commands.Cog):
         interaction: discord.Interaction,
         coupon_code: str
     ):
+        await ensure_deferred(interaction, ephemeral=True)
         try:
             coupon_data = load_coupon_data()
 
             if coupon_code not in coupon_data:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"❌ クーポン `{coupon_code}` は存在しません。",
                     ephemeral=True
                 )
@@ -2185,7 +2206,7 @@ class VendingMachineCog(commands.Cog):
             del coupon_data[coupon_code]
             save_coupon_data(coupon_data)
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"✅ クーポン `{coupon_code}` を削除しました。",
                 ephemeral=True
             )
@@ -2195,6 +2216,7 @@ class VendingMachineCog(commands.Cog):
     @app_commands.command(name="有料自販機クーポン一覧", description="作成したクーポン一覧を表示します")
     @is_allowed()
     async def vm_list_coupons(self, interaction: discord.Interaction):
+        await ensure_deferred(interaction, ephemeral=True)
         try:
             coupon_data = load_coupon_data()
             vending_data = load_json(VENDING_DATA_FILE)
@@ -2202,13 +2224,13 @@ class VendingMachineCog(commands.Cog):
             user_coupons = {k: v for k, v in coupon_data.items() if v.get("owner_id") == user_id}
 
             if not user_coupons:
-                return await interaction.response.send_message("クーポンがありません。", ephemeral=True)
+                return await interaction.followup.send("クーポンがありません。", ephemeral=True)
 
             embed = discord.Embed(title="クーポン一覧", color=discord.Color.blue())
             for code, info in user_coupons.items():
                 vm_name = vending_data.get(info.get("vending_machine_id"), {}).get("name", "不明")
                 embed.add_field(name=f"コード: {code}", value=f"割引: {info['discount']}円\n自販機: {vm_name}", inline=True)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as e:
             await handle_error(interaction, e)
 
@@ -2216,16 +2238,17 @@ class VendingMachineCog(commands.Cog):
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     async def vm_set_role(self, interaction: discord.Interaction, vending_machine_id: str, role: discord.Role):
+        await ensure_deferred(interaction, ephemeral=True)
         try:
             vending_data = load_json(VENDING_DATA_FILE)
             vm = vending_data.get(vending_machine_id)
             if not vm or vm.get("owner_id") != str(interaction.user.id):
-                return await interaction.response.send_message("自販機が見つかりません。", ephemeral=True)
+                return await interaction.followup.send("自販機が見つかりません。", ephemeral=True)
 
             role_data = load_role_assignment_data()
             role_data[vending_machine_id] = {"role_id": role.id, "guild_id": interaction.guild.id}
             save_role_assignment_data(role_data)
-            await interaction.response.send_message(f"ロール {role.mention} を設定しました。", ephemeral=True)
+            await interaction.followup.send(f"ロール {role.mention} を設定しました。", ephemeral=True)
         except Exception as e:
             await handle_error(interaction, e)
 

@@ -1,4 +1,5 @@
 import discord
+from interaction_guard import ensure_deferred
 from discord import ui
 from discord.ext import commands
 from discord import app_commands
@@ -50,7 +51,7 @@ class PayPayModal(ui.Modal, title="PayPay OTP認証"):
     )
     
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
         
         otp_result = await paypayu.login_otp(
             self.uuid,
@@ -155,7 +156,7 @@ class PaypayCog(commands.Cog):
         password: str
     ):
         # PayPay通信が3秒を超えても「アプリが応答しない」にならないよう、先に応答を確定する
-        await interaction.response.defer(ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
         set_uuid = str(uuid.uuid4())
 
         try:

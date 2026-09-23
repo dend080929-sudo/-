@@ -1,4 +1,5 @@
 import discord
+from interaction_guard import ensure_deferred
 from discord.ext import commands
 from discord import app_commands
 import json
@@ -41,7 +42,7 @@ class Vending(commands.Cog):
     @app_commands.command(name="キャッシュログイン", description="Kyashにログインを開始します")
     @app_commands.describe(email="Kyashのメールアドレス", password="Kyashのパスワード")
     async def kyash_login(self, interaction: discord.Interaction, email: str, password: str):
-        await interaction.response.defer(ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
         try:
             kyash = Kyash(email=email, password=password)
             # インスタンスを保持してOTP検証へ繋ぐ
@@ -55,7 +56,7 @@ class Vending(commands.Cog):
     @app_commands.command(name="キャッシュ認証", description="OTPを入力して認証を完了します")
     @app_commands.describe(otp="SMSで届いた6桁の数字")
     async def kyash_verify(self, interaction: discord.Interaction, otp: str):
-        await interaction.response.defer(ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
         attempt = self.login_attempts.get(interaction.user.id)
         
         if not attempt:
