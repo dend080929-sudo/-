@@ -36,7 +36,7 @@ app = Flask(__name__)
 # Cogsフォルダからの拡張機能（PayPay決済等）自動読み込み設定
 async def setup_hook():
     # 本体側の自販機機能と旧Cogs.vendingのコマンド重複を避け、PayPay Cogのみ読み込む
-    extensions = ["Cogs.paypay", "Cogs.vending"]
+    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog"]
     for extension in extensions:
         try:
             await bot.load_extension(extension)
@@ -672,7 +672,7 @@ async def on_ready():
 # -------------------------------------------------------------
 # スラッシュコマンド一覧（完全網羅）
 # -------------------------------------------------------------
-@bot.tree.command(name="config", description="サーバーごとのロールIDやログチャンネルIDを設定・確認します。")
+@bot.tree.command(name="設定", description="サーバーごとのロールIDやログチャンネルIDを設定・確認します。")
 @app_commands.describe(
     member_role="メンバーロール (メンションまたはID)",
     staff_role="スタッフロール (メンションまたはID)",
@@ -716,7 +716,7 @@ async def config_command(
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="setup_ticket", description="チケット作成パネルを送信します。")
+@bot.tree.command(name="チケット設置", description="チケット作成パネルを送信します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_ticket(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
@@ -730,7 +730,7 @@ async def setup_ticket(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=TicketView())
     await interaction.response.send_message("✅ チケットパネルを送信しました！", ephemeral=True)
 
-@bot.tree.command(name="setup_verify", description="認証パネル（ロール付与）を送信します。")
+@bot.tree.command(name="認証設置", description="認証パネル（ロール付与）を送信します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_verify(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
@@ -744,7 +744,7 @@ async def setup_verify(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=VerifyView())
     await interaction.response.send_message("✅ 認証パネルを送信しました！", ephemeral=True)
 
-@bot.tree.command(name="setup_announcement", description="定期お知らせを設定します。")
+@bot.tree.command(name="お知らせ設定", description="定期お知らせを設定します。")
 @app_commands.describe(hours="何時間おきに送信するか (例: 24)", message="送信するメッセージ内容")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_announcement(interaction: discord.Interaction, hours: int, message: str):
@@ -762,7 +762,7 @@ async def setup_announcement(interaction: discord.Interaction, hours: int, messa
         scheduled_announcement.start()
     await interaction.response.send_message(f"✅ このチャンネルに {hours}時間おきの定期お知らせを設定しました！\n内容: {message}", ephemeral=True)
 
-@bot.tree.command(name="check_announcement", description="現在の定期お知らせの設定状況を確認します。")
+@bot.tree.command(name="お知らせ確認", description="現在の定期お知らせの設定状況を確認します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def check_announcement(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
@@ -787,7 +787,7 @@ async def check_announcement(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="test_announcement", description="定期お知らせのテスト送信を行います（現在の設定内容を今すぐ送信）。")
+@bot.tree.command(name="お知らせテスト", description="定期お知らせのテスト送信を行います（現在の設定内容を今すぐ送信）。")
 @app_commands.checks.has_permissions(administrator=True)
 async def test_announcement(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
@@ -814,7 +814,7 @@ async def test_announcement(interaction: discord.Interaction):
     await channel.send(embed=embed)
     await interaction.response.send_message(f"✅ 設定されているチャンネル ({channel.mention}) にテスト送信を行いました！", ephemeral=True)
 
-@bot.tree.command(name="clear_announcement", description="定期お知らせの設定を消去し、自動送信を停止します。")
+@bot.tree.command(name="お知らせ解除", description="定期お知らせの設定を消去し、自動送信を停止します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def clear_announcement(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
@@ -832,7 +832,7 @@ async def clear_announcement(interaction: discord.Interaction):
     save_announce_config(default_config)
     await interaction.response.send_message("✅ 定期お知らせの設定を消去し、自動送信を停止しました。", ephemeral=True)
 
-@bot.tree.command(name="setup_vending", description="自販機パネルを送信します（既存の保存済み自販機から選択、または新規作成可能）。")
+@bot.tree.command(name="簡易自販機設置", description="自販機パネルを送信します（既存の保存済み自販機から選択、または新規作成可能）。")
 @app_commands.describe(machine_name="新しく作成する場合の自販機名（既存から選ぶ場合は空欄でもOK）")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_vending(interaction: discord.Interaction, machine_name: str = None):
@@ -861,7 +861,7 @@ async def setup_vending(interaction: discord.Interaction, machine_name: str = No
         return
 
     if not data:
-        await interaction.response.send_message("❌ 保存されている自販機がありません。コマンドの引数に新しい自販機名を入力して作成してください。(例: `/setup_vending machine_name:メイン自販機`)", ephemeral=True)
+        await interaction.response.send_message("❌ 保存されている自販機がありません。コマンドの引数に新しい自販機名を入力して作成してください。(例: `/簡易自販機設置 machine_name:メイン自販機`)", ephemeral=True)
         return
 
     class VendingMachineSelectView(discord.ui.View):
@@ -895,7 +895,7 @@ async def setup_vending(interaction: discord.Interaction, machine_name: str = No
 
     await interaction.response.send_message("👇 設置したい保存済みの自販機を選択してください：", view=VendingMachineSelectView(), ephemeral=True)
 
-@bot.tree.command(name="vending_list", description="指定した自販機の登録商品一覧を確認します。")
+@bot.tree.command(name="簡易自販機一覧", description="指定した自販機の登録商品一覧を確認します。")
 @app_commands.describe(machine_name="確認したい自販機の名前")
 @app_commands.checks.has_permissions(administrator=True)
 async def vending_list(interaction: discord.Interaction, machine_name: str):
@@ -913,7 +913,7 @@ async def vending_list(interaction: discord.Interaction, machine_name: str):
         embed.add_field(name=f"ID: {i_id}", value=f"商品名: {info['name']} | 在庫: {stock_str}個", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="vending_delete", description="指定した自販機から特定の商品を削除します。")
+@bot.tree.command(name="簡易商品削除", description="指定した自販機から特定の商品を削除します。")
 @app_commands.describe(machine_name="対象の自販機名", item_id="削除する商品のID (例: 1)")
 @app_commands.checks.has_permissions(administrator=True)
 async def vending_delete(interaction: discord.Interaction, machine_name: str, item_id: str):
@@ -929,7 +929,7 @@ async def vending_delete(interaction: discord.Interaction, machine_name: str, it
     else:
         await interaction.response.send_message(f"❌ 指定された自販機名または商品IDが見つかりませんでした。", ephemeral=True)
 
-@bot.tree.command(name="vending_machine_delete", description="指定した自販機自体（登録されている全商品データ含む）を削除します。")
+@bot.tree.command(name="簡易自販機削除", description="指定した自販機自体（登録されている全商品データ含む）を削除します。")
 @app_commands.describe(machine_name="削除したい自販機の名前")
 @app_commands.checks.has_permissions(administrator=True)
 async def vending_machine_delete(interaction: discord.Interaction, machine_name: str):
@@ -945,7 +945,7 @@ async def vending_machine_delete(interaction: discord.Interaction, machine_name:
     else:
         await interaction.response.send_message(f"❌ 指定された自販機名「{machine_name}」が見つかりませんでした。", ephemeral=True)
 
-@bot.tree.command(name="backup", description="メンバーバックアップを手動で強制実行し、登録人数を表示します。")
+@bot.tree.command(name="バックアップ", description="メンバーバックアップを手動で強制実行し、登録人数を表示します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def backup_command(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
@@ -960,7 +960,7 @@ async def backup_command(interaction: discord.Interaction):
     else:
         await interaction.followup.send("❌ バックアップの実行に失敗しました。", ephemeral=True)
 
-@bot.tree.command(name="force_join", description="スプレッドシートに登録されている全ユーザーのアクセストークンを使い、サーバーに一斉呼び戻します。")
+@bot.tree.command(name="一括呼び戻し", description="スプレッドシートに登録されている全ユーザーのアクセストークンを使い、サーバーに一斉呼び戻します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def force_join(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
@@ -1010,7 +1010,7 @@ async def force_join(interaction: discord.Interaction):
         ephemeral=True
     )
 
-@bot.tree.command(name="say", description="ボットに指定した言葉を喋らせます。")
+@bot.tree.command(name="発言", description="ボットに指定した言葉を喋らせます。")
 @app_commands.describe(message="ボットに発言させたい言葉")
 @app_commands.checks.has_permissions(administrator=True)
 async def say_command(interaction: discord.Interaction, message: str):
@@ -1020,26 +1020,28 @@ async def say_command(interaction: discord.Interaction, message: str):
     await interaction.channel.send(message)
     await interaction.response.send_message("✅ メッセージを送信しました。", ephemeral=True)
 
-@bot.tree.command(name="help_cmd", description="ボットのコマンド一覧と使い方を表示します。")
+@bot.tree.command(name="ヘルプ", description="ボットのコマンド一覧と使い方を表示します。")
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🤖 ボット機能・コマンド一覧",
         description="このサーバーで利用できるコマンドと機能のご案内です。",
         color=0x3498DB
     )
-    embed.add_field(name="⚙️ サーバー設定", value="`/config` - ロールやログチャンネルを設定・確認します。", inline=False)
-    embed.add_field(name="🎫 チケット機能", value="`/setup_ticket` - お問い合わせ用チケット作成パネルを送信します。", inline=False)
-    embed.add_field(name="✅ 認証機能", value="`/setup_verify` - 認証＆ロール付与パネルを送信します。\n※認証時にスプレッドシートへデータが永続化されます。", inline=False)
-    embed.add_field(name="🎪 自販機機能", value="`/setup_vending` - 自販機パネルを設置します（既存選択 or 新規）。\n`/vending_list` - 登録商品一覧の確認\n`/vending_delete` - 商品の削除\n`/vending_machine_delete` - 自販機自体の削除", inline=False)
-    embed.add_field(name="📢 定期お知らせ", value="`/setup_announcement` - 定期お知らせを設定します。\n`/check_announcement` - 設定状況を確認します。\n`/test_announcement` - テスト送信をします。\n`/clear_announcement` - 設定を消去して停止します。", inline=False)
+    embed.add_field(name="⚙️ サーバー設定", value="`/設定` - ロールやログチャンネルを設定・確認します。", inline=False)
+    embed.add_field(name="🎫 チケット機能", value="`/チケット設置` - お問い合わせ用チケット作成パネルを送信します。", inline=False)
+    embed.add_field(name="✅ 認証機能", value="`/認証設置` - 認証＆ロール付与パネルを送信します。\n※認証時にスプレッドシートへデータが永続化されます。", inline=False)
+    embed.add_field(name="🎪 無料・簡易自販機機能", value="`/簡易自販機設置` - 簡易自販機パネルを設置します。\n`/簡易自販機一覧` - 登録商品一覧の確認\n`/簡易商品削除` - 商品の削除\n`/簡易自販機削除` - 自販機自体の削除", inline=False)
+    embed.add_field(name="💰 有料自販機機能（PayPay・Kyash）", value="`/有料自販機作成` - 有料自販機を作成\n`/有料商品追加` - 価格付きの商品を追加\n`/有料自販機設置` - 有料自販機を設置\n`/有料在庫追加` - 在庫を追加\n`/有料商品情報変更` - PayPay価格・Kyash価格を変更\n`/有料自販機パネル更新` - パネルを更新\n`/有料在庫引出` - 在庫を引き出す\n`/有料在庫内容確認` - 在庫を確認\n`/有料商品削除` - 商品を削除\n`/有料自販機削除` - 有料自販機を削除\n`/有料公開ログ設定`・`/有料購入ログ設定`・`/有料非公開ログ設定` - 購入ログ設定\n`/有料自販機クーポン作成`・`/有料自販機クーポン削除`・`/有料自販機クーポン一覧` - クーポン管理", inline=False)
+    embed.add_field(name="💳 決済アカウント", value="`/ペイペイログイン` - PayPayを登録\n`/ペイペイログアウト` - PayPay情報を削除\n`/ペイペイプロキシ設定` - 通信設定\n`/キャッシュログイン` - Kyashログインを開始\n`/キャッシュ認証` - Kyashの認証コードを入力", inline=False)
+    embed.add_field(name="📢 定期お知らせ", value="`/お知らせ設定` - 定期お知らせを設定します。\n`/お知らせ確認` - 設定状況を確認します。\n`/お知らせテスト` - テスト送信をします。\n`/お知らせ解除` - 設定を消去して停止します。", inline=False)
     embed.add_field(name="👑 実績管理", value="実績チャンネル（ログチャンネル）の投稿数を自動カウントし、チャンネル名を `👑｜実績ー〇〇` に自動更新します。", inline=False)
-    embed.add_field(name="💬 発言機能", value="`/say` - ボットに指定した言葉を喋らせます。", inline=False)
-    embed.add_field(name="💾 バックアップ＆呼び出し", value="`/backup` - メンバーデータを手動でバックアップし、登録人数を表示します。\n`/force_join` - 登録されている全ユーザーをサーバーに一斉呼び戻しします。", inline=False)
-    embed.add_field(name="💥 チャンネル管理", value="`/nuke` - 現在のチャンネルを初期化（作り直し）します。", inline=False)
+    embed.add_field(name="💬 発言機能", value="`/発言` - ボットに指定した言葉を喋らせます。", inline=False)
+    embed.add_field(name="💾 バックアップ＆呼び出し", value="`/バックアップ` - メンバーデータを手動でバックアップし、登録人数を表示します。\n`/一括呼び戻し` - 登録されている全ユーザーをサーバーに一斉呼び戻しします。", inline=False)
+    embed.add_field(name="💥 チャンネル管理", value="`/チャンネル再作成` - 現在のチャンネルを初期化（作り直し）します。", inline=False)
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="nuke", description="現在のチャンネルを削除し、同じ設定の新しいチャンネルに作り直します。")
+@bot.tree.command(name="チャンネル再作成", description="現在のチャンネルを削除し、同じ設定の新しいチャンネルに作り直します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def nuke(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
