@@ -7,6 +7,7 @@ import os
 import uuid
 from utils import is_allowed
 import paypayu
+from persistent_store import load_json_store, save_json_store
 
 PAYPAY_DATA_FILE = "paypay_data.json"
 VENDING_DATA_FILE = "vending_data.json"
@@ -26,14 +27,10 @@ def save_vending_data(data):
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 def load_paypay_data():
-    if os.path.exists(PAYPAY_DATA_FILE):
-        with open(PAYPAY_DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    return load_json_store("paypay_accounts", PAYPAY_DATA_FILE)
 
 def save_paypay_data(data):
-    with open(PAYPAY_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json_store("paypay_accounts", data, PAYPAY_DATA_FILE)
 
 class PayPayModal(ui.Modal, title="PayPay OTP認証"):
     def __init__(self, phone, password, uuid, otpid, otp_pre):
@@ -143,7 +140,7 @@ class PaypayCog(commands.Cog):
             save_paypay_data({})
 
     @app_commands.command(
-        name="paypayログイン",
+        name="ペイペイログイン",
         description="PayPayアカウントにログインします"
     )
     @is_allowed()
@@ -208,7 +205,7 @@ class PaypayCog(commands.Cog):
     # PayPayログアウトコマンド
     # =========================
     @app_commands.command(
-        name="paypayログアウト",
+        name="ペイペイログアウト",
         description="PayPayアカウントをログアウトします"
     )
     @is_allowed()
@@ -258,7 +255,7 @@ class PaypayCog(commands.Cog):
     # PayPayプロキシ設定コマンド
     # =========================
     @app_commands.command(
-        name="paypayプロキシ設定",
+        name="ペイペイプロキシ設定",
         description="PayPayリクエストに使用するプロキシURLを設定・更新します"
     )
     @is_allowed()

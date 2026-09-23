@@ -10,6 +10,7 @@ import uuid
 import io
 from utils import is_allowed
 import paypayu
+from persistent_store import load_json_store, save_json_store
 import random
 import requests
 from bs4 import BeautifulSoup
@@ -62,10 +63,7 @@ def save_json(file_path: str, data: dict) -> None:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 def load_paypay_data() -> dict:
-    if os.path.exists(PAYPAY_DATA_FILE):
-        with open(PAYPAY_DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    return load_json_store("paypay_accounts", PAYPAY_DATA_FILE)
 
 def load_kyash_data() -> dict:
     if os.path.exists(KYASH_DATA_FILE):
@@ -390,7 +388,7 @@ class VendingMachineCog(commands.Cog):
             content_view = VendingMachineCog.ContentView(products_data)
             self.bot.add_view(content_view)
 
-    @app_commands.command(name="自販機作成", description="自販機を作成します")
+    @app_commands.command(name="有料自販機作成", description="自販機を作成します")
     @is_allowed()
     @app_commands.describe(name="自販機の名前")
     async def vm_create(self, interaction: discord.Interaction, name: str):
@@ -424,7 +422,7 @@ class VendingMachineCog(commands.Cog):
         
         await interaction.response.send_message("\n".join(msg_parts), ephemeral=True)
 
-    @app_commands.command(name="公開ログ設定", description="全サーバー共通の公開販売ログを送信するチャンネルを設定します")
+    @app_commands.command(name="有料公開ログ設定", description="全サーバー共通の公開販売ログを送信するチャンネルを設定します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", channel="ログを集約するチャンネル")
@@ -438,7 +436,7 @@ class VendingMachineCog(commands.Cog):
         save_json(VENDING_DATA_FILE, vending_data)
         await interaction.response.send_message(f"自販機「{vm['name']}」のログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
 
-    @app_commands.command(name="購入ログ設定", description="このサーバー内での購入ログを送信するチャンネルを設定します")
+    @app_commands.command(name="有料購入ログ設定", description="このサーバー内での購入ログを送信するチャンネルを設定します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", channel="このサーバー用のログチャンネル")
@@ -456,7 +454,7 @@ class VendingMachineCog(commands.Cog):
         save_json(VENDING_DATA_FILE, vending_data)
         await interaction.response.send_message(f"このサーバーでの購入ログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
 
-    @app_commands.command(name="非公開ログ設定", description="非公開販売ログを送信するチャンネルを設定します")
+    @app_commands.command(name="有料非公開ログ設定", description="非公開販売ログを送信するチャンネルを設定します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", channel="ログを送信するチャンネル")
@@ -471,7 +469,7 @@ class VendingMachineCog(commands.Cog):
         
         await interaction.response.send_message(f"自販機「{vm['name']}」の非公開ログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
 
-    @app_commands.command(name="商品追加", description="指定した自販機に新しい商品を追加します")
+    @app_commands.command(name="有料商品追加", description="指定した自販機に新しい商品を追加します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(
@@ -522,7 +520,7 @@ class VendingMachineCog(commands.Cog):
             ephemeral=True
         )
 
-    @app_commands.command(name="在庫追加", description="商品の在庫を追加します")
+    @app_commands.command(name="有料在庫追加", description="商品の在庫を追加します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", stock_type="在庫タイプ", stock_file="在庫ファイル(txtのみ)")
@@ -547,7 +545,7 @@ class VendingMachineCog(commands.Cog):
         view = VendingMachineCog.ProductSelectViewForStock(products, stock_file, stock_type)
         await interaction.response.send_message("在庫追加を行う商品を選択してください:", view=view, ephemeral=True)
 
-    @app_commands.command(name="自販機設置", description="自販機パネルを設置します")
+    @app_commands.command(name="有料自販機設置", description="自販機パネルを設置します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(
@@ -599,7 +597,7 @@ class VendingMachineCog(commands.Cog):
         view = VendingMachineCog.VendingMachineView(vending_machine_id, self.bot)
         await interaction.response.send_message(embed=embed, view=view)
 
-    @app_commands.command(name="在庫引出", description="商品の在庫を引き出します")
+    @app_commands.command(name="有料在庫引出", description="商品の在庫を引き出します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機", quantity="数量")
@@ -619,7 +617,7 @@ class VendingMachineCog(commands.Cog):
         view = VendingMachineCog.WithdrawStockView(products, quantity)
         await interaction.response.send_message("在庫引出を行う商品を選択してください:", view=view, ephemeral=True)
 
-    @app_commands.command(name="在庫内容確認", description="商品の在庫内容を確認します")
+    @app_commands.command(name="有料在庫内容確認", description="商品の在庫内容を確認します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機")
@@ -636,7 +634,7 @@ class VendingMachineCog(commands.Cog):
         view = VendingMachineCog.ContentView(products)
         await interaction.response.send_message("在庫内容確認を行う商品を選択してください:", view=view, ephemeral=True)
 
-    @app_commands.command(name="商品削除", description="自販機から商品を完全に削除します")
+    @app_commands.command(name="有料商品削除", description="自販機から商品を完全に削除します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機")
@@ -655,7 +653,7 @@ class VendingMachineCog(commands.Cog):
         
         await interaction.response.send_message("削除する商品を選択してください:", view=view, ephemeral=True)
 
-    @app_commands.command(name="商品情報変更", description="商品の各情報を変更します")
+    @app_commands.command(name="有料商品情報変更", description="商品の各情報を変更します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="自販機")
@@ -672,7 +670,7 @@ class VendingMachineCog(commands.Cog):
         view = VendingMachineCog.EditProductView(products, vending_machine_id)
         await interaction.response.send_message("情報を変更する商品を選択してください:", view=view, ephemeral=True)
 
-    @app_commands.command(name="自販機削除", description="自販機を完全に削除します")
+    @app_commands.command(name="有料自販機削除", description="自販機を完全に削除します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="削除する自販機")
@@ -700,7 +698,7 @@ class VendingMachineCog(commands.Cog):
         except Exception as e:
             await handle_error(interaction, e)
     
-    @app_commands.command(name="自販機パネル更新", description="自販機パネルを更新します")
+    @app_commands.command(name="有料自販機パネル更新", description="自販機パネルを更新します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(
@@ -2087,7 +2085,7 @@ class VendingMachineCog(commands.Cog):
             except Exception as e:
                 await handle_error(interaction, e)
 
-    @app_commands.command(name="在庫追加通知設定", description="在庫追加時の通知設定を行います")
+    @app_commands.command(name="有料在庫追加通知設定", description="在庫追加時の通知設定を行います")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.describe(vending_machine_id="通知設定する自販機", channel="通知を送信するチャンネル", role="メンションするロール")
@@ -2115,7 +2113,7 @@ class VendingMachineCog(commands.Cog):
         except Exception as e:
             await handle_error(interaction, e)
 
-    @app_commands.command(name="在庫追加設定解除", description="在庫追加通知設定を解除します")
+    @app_commands.command(name="有料在庫追加設定解除", description="在庫追加通知設定を解除します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     async def stock_notification_remove(self, interaction: discord.Interaction, vending_machine_id: str):
@@ -2136,7 +2134,7 @@ class VendingMachineCog(commands.Cog):
         except Exception as e:
             await handle_error(interaction, e)
 
-    @app_commands.command(name="自販機クーポン作成", description="指定した自販機用のクーポンコードを作成します")
+    @app_commands.command(name="有料自販機クーポン作成", description="指定した自販機用のクーポンコードを作成します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     async def vm_create_coupon(self, interaction: discord.Interaction, vending_machine_id: str, coupon_code: str, discount: int):
@@ -2165,7 +2163,7 @@ class VendingMachineCog(commands.Cog):
             await handle_error(interaction, e)
 
     @app_commands.command(
-        name="自販機クーポン削除",
+        name="有料自販機クーポン削除",
         description="【管理者専用】クーポンを削除します"
     )
     @app_commands.checks.has_permissions(administrator=True)
@@ -2194,7 +2192,7 @@ class VendingMachineCog(commands.Cog):
         except Exception as e:
             await handle_error(interaction, e)
 
-    @app_commands.command(name="自販機クーポン一覧", description="作成したクーポン一覧を表示します")
+    @app_commands.command(name="有料自販機クーポン一覧", description="作成したクーポン一覧を表示します")
     @is_allowed()
     async def vm_list_coupons(self, interaction: discord.Interaction):
         try:
@@ -2214,7 +2212,7 @@ class VendingMachineCog(commands.Cog):
         except Exception as e:
             await handle_error(interaction, e)
 
-    @app_commands.command(name="自販機ロール設定", description="購入時に付与するロールを設定します")
+    @app_commands.command(name="有料自販機ロール設定", description="購入時に付与するロールを設定します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     async def vm_set_role(self, interaction: discord.Interaction, vending_machine_id: str, role: discord.Role):
