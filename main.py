@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import hmac
 import shutil
 import threading
 import time
@@ -14,6 +15,7 @@ from discord.ext import commands, tasks
 import gspread
 from google.oauth2.service_account import Credentials
 from persistent_store import load_json_store, preload_json_stores, save_json_store
+from mail_service import deliver_incoming
 
 # -------------------------------------------------------------
 # ⚙️ 設定（Render等の共通環境変数から安全に読み込みます）
@@ -35,13 +37,17 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 app = Flask(__name__)
+BOT_LOOP = None
 
 async def global_interaction_check(interaction: discord.Interaction) -> bool:
     # スラッシュコマンドは、処理内容に関係なく最初に保留応答を返す。
     # ボタンやモーダルは各処理側の応答を使う。
     if interaction.type == discord.InteractionType.application_command:
         # 自販機パネル本体はサーバー全員に公開する必要がある。
-        is_public_panel = getattr(interaction.command, "name", None) == "有料自販機設置"
+        is_public_panel = getattr(interaction.command, "name", None) in {
+            "有料自販機設置",
+            "メールパネル設置",
+        }
         await ensure_deferred(interaction, ephemeral=not is_public_panel)
     return True
 
@@ -73,9 +79,10 @@ async def setup_hook():
         ("paid_used_paypay_links", "used_paypay_links.json"),
         ("paypay_accounts", "paypay_data.json"),
         ("kyash_accounts", "kyash_data.json"),
+        ("mail_accounts", "mail_accounts.json"),
     ])
     # 本体側の自販機機能と有料自販機Cogを読み込む
-    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog"]
+    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog", "Cogs.mail"]
     for extension in extensions:
         try:
             await bot.load_extension(extension)
@@ -273,6 +280,28 @@ def home():
     </body>
     </html>
     """
+
+@app.route("/mail/incoming", methods=["POST"])
+def mail_incoming():
+    expected = os.environ.get("MAIL_WEBHOOK_TOKEN", "")
+    received = request.headers.get("X-Mail-Webhook-Token", "")
+    if not expected or not hmac.compare_digest(received, expected):
+        return {"ok": False, "error": "unauthorized"}, 401
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not payload.get("to"):
+        return {"ok": False, "error": "invalid_payload"}, 400
+    if BOT_LOOP is None or not BOT_LOOP.is_running():
+        return {"ok": False, "error": "bot_not_ready"}, 503
+
+    future = asyncio.run_coroutine_threadsafe(deliver_incoming(bot, payload), BOT_LOOP)
+    try:
+        future.result(timeout=15)
+    except Exception as exc:
+        print(f"メールDiscord転送エラー: {exc}")
+        return {"ok": False, "error": "delivery_failed"}, 502
+    return {"ok": True}, 202
+
 
 @app.route("/callback")
 def callback():
@@ -616,6 +645,8 @@ class VerifyView(discord.ui.View):
 # -------------------------------------------------------------
 @bot.event
 async def on_ready():
+    global BOT_LOOP
+    BOT_LOOP = asyncio.get_running_loop()
     print(f"ログインしました: {bot.user.name} (ID: {bot.user.id})")
     
     try:
@@ -1029,6 +1060,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="📢 定期お知らせ", value="`/お知らせ設定` - 定期お知らせを設定します。\n`/お知らせ確認` - 設定状況を確認します。\n`/お知らせテスト` - テスト送信をします。\n`/お知らせ解除` - 設定を消去して停止します。", inline=False)
     embed.add_field(name="👑 実績管理", value="実績チャンネル（ログチャンネル）の投稿数を自動カウントし、チャンネル名を `👑｜実績ー〇〇` に自動更新します。", inline=False)
     embed.add_field(name="💬 発言機能", value="`/発言` - ボットに指定した言葉を喋らせます。", inline=False)
+    embed.add_field(name="✉️ メール機能", value="`/メールパネル設置` - メールアドレス発行パネルを設置します。発行・表示削除はパネルのボタンから行います。", inline=False)
     embed.add_field(name="💾 バックアップ＆呼び出し", value="`/バックアップ` - メンバーデータを手動でバックアップし、登録人数を表示します。\n`/一括呼び戻し` - 登録されている全ユーザーをサーバーに一斉呼び戻しします。", inline=False)
     embed.add_field(name="💥 チャンネル管理", value="`/チャンネル再作成` - 現在のチャンネルを初期化（作り直し）します。", inline=False)
     

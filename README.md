@@ -93,3 +93,43 @@ Googleスプレッドシート保存を有効にするには、サービスア�
 ## Discordの「アプリケーションが応答しませんでした」対策
 
 Googleスプレッドシート保存は変更せず、スラッシュコマンドの開始直後にDiscordへ非公開の保留応答を返す方式にしています。その後、読み込み・保存が完了したら `followup` で結果を返します。保存はバックグラウンドで完了扱いにせず、シートへの書き込み完了を待ってから結果を返すため、保存途中の再起動による欠落を防ぎます。
+
+## Cloudflareメール機能
+
+Cloudflare Email RoutingのキャッチオールをEmail Workerへ接続し、WorkerからこのBotの`POST /mail/incoming`へ受信メールを送ります。公式のEmail Workerは`email()`ハンドラーで受信メールのメタデータとRaw MIME本文を取得できるため、Workerテンプレートでは`postal-mime`で本文を解析してからBotへ転送します。
+
+Render側には次の環境変数を設定してください。
+
+```text
+MAIL_DOMAIN=vel0x0.xyz
+MAIL_INBOX_CHANNEL_ID=通常表示チャンネルのID
+MAIL_ARCHIVE_CHANNEL_ID=保管チャンネルのID
+MAIL_WEBHOOK_TOKEN=PythonとCloudflare Workerで一致する長いランダム文字列
+```
+
+メールアドレスの発行情報はGoogleスプレッドシートの`mail_accounts`シートへ保存されます。`/メール発行`を実行するとランダムなアドレスが発行され、表示削除ボタンを押すとDiscord上の発行表示だけが削除されます。アドレス自体は停止せず、削除後の新着メールは`MAIL_ARCHIVE_CHANNEL_ID`へ送られます。
+
+Cloudflare Worker側のSecretには次を設定し、`PYTHON_MAIL_URL`はRenderの公開URLに置き換えてください。
+
+```text
+PYTHON_MAIL_URL=https://あなたのRender公開URL/mail/incoming
+MAIL_WEBHOOK_TOKEN=Render側と同じ値
+```
+
+`cloudflare/`フォルダにはWorker本体と`postal-mime`の依存定義を入れています。Workerをデプロイした後、Cloudflare Email Routingのキャッチオールのアクションを`discord-mail-router`へ設定してください。メール本文はDiscordのEmbedに表示し、添付ファイル本体は現版では保存せず、ファイル名・種類・サイズの転送にも対応していません。
+
+Workerのデプロイ例は次のとおりです。
+
+```bash
+cd cloudflare
+npm install
+npx wrangler secret put PYTHON_MAIL_URL
+npx wrangler secret put MAIL_WEBHOOK_TOKEN
+npx wrangler deploy
+```
+
+`PYTHON_MAIL_URL`にはRenderの公開HTTPS URLに`/mail/incoming`を付けた値を入力してください。Cloudflare側のキャッチオールの送信先は、デプロイした`discord-mail-router` Workerを選びます。RenderのBotが停止中・チャンネルIDが間違っている・トークンが一致しない場合、Webhookは成功せず、Cloudflare Workerのログで確認できます。
+
+### メールパネル方式
+
+メールアドレスの発行はコマンド返信ではなく、管理者が`/メールパネル設置`で公開パネルを設置し、利用者がパネルの「メールアドレスを発行」ボタンを押して行います。発行されたアドレスは利用者本人だけに見える非公開パネルで表示され、そのパネルの「表示を削除」ボタンからDiscord上の表示を削除できます。
