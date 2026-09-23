@@ -36,7 +36,7 @@ app = Flask(__name__)
 # Cogsフォルダからの拡張機能（PayPay決済等）自動読み込み設定
 async def setup_hook():
     # 本体側の自販機機能と旧Cogs.vendingのコマンド重複を避け、PayPay Cogのみ読み込む
-    extensions = ["Cogs.paypay"]
+    extensions = ["Cogs.paypay", "Cogs.vending"]
     for extension in extensions:
         try:
             await bot.load_extension(extension)
