@@ -22,7 +22,9 @@ def is_allowed():
             return True
             
         # 権限がない場合のメッセージを表示
-        if not interaction.response.is_done():
+        if interaction.response.is_done():
+            await interaction.followup.send("🚫 権限がありません。管理者のみ実行可能です。", ephemeral=True)
+        else:
             await interaction.response.send_message("🚫 権限がありません。管理者のみ実行可能です。", ephemeral=True)
         return False
 

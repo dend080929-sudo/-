@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import shutil
 import threading
 import time
@@ -7,10 +8,12 @@ from datetime import datetime
 from flask import Flask, request
 import requests
 import discord
+from interaction_guard import ensure_deferred
 from discord import app_commands
 from discord.ext import commands, tasks
 import gspread
 from google.oauth2.service_account import Credentials
+from persistent_store import load_json_store, preload_json_stores, save_json_store
 
 # -------------------------------------------------------------
 # ⚙️ 設定（Render等の共通環境変数から安全に読み込みます）
@@ -33,9 +36,31 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 app = Flask(__name__)
 
+async def global_interaction_check(interaction: discord.Interaction) -> bool:
+    # スラッシュコマンドは、処理内容に関係なく最初に保留応答を返す。
+    # ボタンやモーダルは各処理側の応答を使う。
+    if interaction.type == discord.InteractionType.application_command:
+        await ensure_deferred(interaction, ephemeral=True)
+    return True
+
+bot.tree.interaction_check = global_interaction_check
+
 # Cogsフォルダからの拡張機能（PayPay決済等）自動読み込み設定
 async def setup_hook():
-    # 本体側の自販機機能と旧Cogs.vendingのコマンド重複を避け、PayPay Cogのみ読み込む
+    # Google APIをコマンド実行中に待たないよう、有料自販機関連データを起動時に先読みする
+    await asyncio.to_thread(preload_json_stores, [
+        ("server_config", "server_config.json"),
+        ("vending_items", "free_vending_data.json"),
+        ("paid_vending_items", "vending_data.json"),
+        ("paid_stock_contents", "stock_contents.json"),
+        ("paid_stock_notifications", "stock_notification_data.json"),
+        ("paid_coupons", "coupon_data.json"),
+        ("paid_role_assignments", "role_assignment_data.json"),
+        ("paid_used_paypay_links", "used_paypay_links.json"),
+        ("paypay_accounts", "paypay_data.json"),
+        ("kyash_accounts", "kyash_data.json"),
+    ])
+    # 本体側の自販機機能と有料自販機Cogを読み込む
     extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog"]
     for extension in extensions:
         try:
@@ -68,82 +93,23 @@ def get_gspread_client():
 
 # サーバーごとの設定（ロールID・ログチャンネルIDなど）をスプレッドシートで管理する関数
 def load_server_config():
-    client = get_gspread_client()
     default_config = {
         "member_role_id": int(os.environ.get("MEMBER_ROLE_ID", 0)),
         "staff_role_id": int(os.environ.get("STAFF_ROLE_ID", 0)),
         "admin_role_id": int(os.environ.get("ADMIN_ROLE_ID", 0)),
         "log_channel_id": int(os.environ.get("LOG_CHANNEL_ID", 0))
     }
-    if not client:
-        return default_config
-    try:
-        spreadsheet = client.open(SPREADSHEET_NAME)
-        try:
-            sheet = spreadsheet.worksheet("server_config")
-        except gspread.exceptions.WorksheetNotFound:
-            sheet = spreadsheet.add_worksheet(title="server_config", rows=10, cols=10)
-            data_str = json.dumps(default_config, ensure_ascii=False)
-            sheet.update_cell(1, 1, data_str)
-            return default_config
-        
-        data_str = sheet.cell(1, 1).value
-        if not data_str:
-            return default_config
-        return json.loads(data_str)
-    except Exception as e:
-        print(f"スプレッドシート(server_config)読み込みエラー: {e}")
-        return default_config
+    data = load_json_store("server_config", "server_config.json")
+    return {**default_config, **data}
 
 def save_server_config(config):
-    client = get_gspread_client()
-    if not client:
-        print("スプレッドシートクライアントが初期化されていません。")
-        return
-    try:
-        spreadsheet = client.open(SPREADSHEET_NAME)
-        try:
-            sheet = spreadsheet.worksheet("server_config")
-        except gspread.exceptions.WorksheetNotFound:
-            sheet = spreadsheet.add_worksheet(title="server_config", rows=10, cols=10)
-        
-        sheet.clear()
-        data_str = json.dumps(config, ensure_ascii=False)
-        sheet.update_cell(1, 1, data_str)
-    except Exception as e:
-        print(f"スプレッドシート(server_config)保存エラー: {e}")
+    save_json_store("server_config", config, "server_config.json")
 
 def load_vending():
-    client = get_gspread_client()
-    if not client:
-        return {}
-    try:
-        sheet = client.open(SPREADSHEET_NAME).worksheet("vending_items")
-        data_str = sheet.cell(1, 1).value
-        if not data_str:
-            return {}
-        return json.loads(data_str)
-    except Exception as e:
-        print(f"スプレッドシート(vending)読み込みエラー: {e}")
-        return {}
+    return load_json_store("vending_items", "free_vending_data.json")
 
 def save_vending(data):
-    client = get_gspread_client()
-    if not client:
-        print("スプレッドシートクライアントが初期化されていません。")
-        return
-    try:
-        spreadsheet = client.open(SPREADSHEET_NAME)
-        try:
-            sheet = spreadsheet.worksheet("vending_items")
-        except gspread.exceptions.WorksheetNotFound:
-            sheet = spreadsheet.add_worksheet(title="vending_items", rows=100, cols=20)
-        
-        sheet.clear()
-        data_str = json.dumps(data, ensure_ascii=False)
-        sheet.update_cell(1, 1, data_str)
-    except Exception as e:
-        print(f"スプレッドシート(vending)保存エラー: {e}")
+    save_json_store("vending_items", data, "free_vending_data.json")
 
 def load_data():
     client = get_gspread_client()
@@ -454,7 +420,7 @@ class ItemAddModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
 
         if not has_admin_role(interaction.user):
             await interaction.followup.send("❌ 権限がありません。", ephemeral=True)
@@ -498,7 +464,7 @@ class PurchaseConfirmView(discord.ui.View):
     @discord.ui.button(label="購入確定", style=discord.ButtonStyle.green, custom_id="confirm_purchase_btn")
     async def confirm_purchase(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
 
         data = load_vending()
         if self.machine_name not in data or self.item_id not in data[self.machine_name]:
@@ -562,7 +528,7 @@ class VendingSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
 
         if self.values[0] == "none":
             await interaction.followup.send("❌ 商品がありません。", ephemeral=True)
@@ -592,7 +558,7 @@ class VendingMainView(discord.ui.View):
     @discord.ui.button(label="🛒 購入する", style=discord.ButtonStyle.green, custom_id="vending_buy_main_btn")
     async def buy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
         view = discord.ui.View()
         view.add_item(VendingSelect(self.machine_name))
         await interaction.followup.send("セレクトメニューから商品を選択してください。", view=view, ephemeral=True)
@@ -600,7 +566,7 @@ class VendingMainView(discord.ui.View):
     @discord.ui.button(label="🔍 在庫・販売数の確認", style=discord.ButtonStyle.blurple, custom_id="vending_stock_main_btn")
     async def stock_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await ensure_deferred(interaction, ephemeral=True)
         
         data = load_vending()
         items = data.get(self.machine_name, {})
@@ -687,8 +653,9 @@ async def config_command(
     admin_role: discord.Role = None, 
     log_channel: discord.TextChannel = None
 ):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user) and not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
 
     cfg = load_server_config()
@@ -714,13 +681,14 @@ async def config_command(
     embed.add_field(name="👑 管理者ロール", value=f"<@&{cfg['admin_role_id']}>" if cfg['admin_role_id'] else "未設定", inline=False)
     embed.add_field(name="📜 実績/ログチャンネル", value=f"<#{cfg['log_channel_id']}>" if cfg['log_channel_id'] else "未設定", inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="チケット設置", description="チケット作成パネルを送信します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_ticket(interaction: discord.Interaction):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     embed = discord.Embed(
         title="🎫 お問い合わせチケット作成",
@@ -728,13 +696,14 @@ async def setup_ticket(interaction: discord.Interaction):
         color=0x2b2d31
     )
     await interaction.channel.send(embed=embed, view=TicketView())
-    await interaction.response.send_message("✅ チケットパネルを送信しました！", ephemeral=True)
+    await interaction.followup.send("✅ チケットパネルを送信しました！", ephemeral=True)
 
 @bot.tree.command(name="認証設置", description="認証パネル（ロール付与）を送信します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_verify(interaction: discord.Interaction):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     embed = discord.Embed(
         title="✅ 認証パネル",
@@ -742,14 +711,15 @@ async def setup_verify(interaction: discord.Interaction):
         color=0x3498DB
     )
     await interaction.channel.send(embed=embed, view=VerifyView())
-    await interaction.response.send_message("✅ 認証パネルを送信しました！", ephemeral=True)
+    await interaction.followup.send("✅ 認証パネルを送信しました！", ephemeral=True)
 
 @bot.tree.command(name="お知らせ設定", description="定期お知らせを設定します。")
 @app_commands.describe(hours="何時間おきに送信するか (例: 24)", message="送信するメッセージ内容")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_announcement(interaction: discord.Interaction, hours: int, message: str):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     config = {
         "channel_id": interaction.channel.id,
@@ -760,13 +730,14 @@ async def setup_announcement(interaction: discord.Interaction, hours: int, messa
     scheduled_announcement.change_interval(hours=hours)
     if not scheduled_announcement.is_running():
         scheduled_announcement.start()
-    await interaction.response.send_message(f"✅ このチャンネルに {hours}時間おきの定期お知らせを設定しました！\n内容: {message}", ephemeral=True)
+    await interaction.followup.send(f"✅ このチャンネルに {hours}時間おきの定期お知らせを設定しました！\n内容: {message}", ephemeral=True)
 
 @bot.tree.command(name="お知らせ確認", description="現在の定期お知らせの設定状況を確認します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def check_announcement(interaction: discord.Interaction):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     
     config = load_announce_config()
@@ -785,24 +756,25 @@ async def check_announcement(interaction: discord.Interaction):
     embed.add_field(name="⏳ 送信間隔", value=f"{hours} 時間おき", inline=False)
     embed.add_field(name="💬 送信メッセージ", value=message, inline=False)
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="お知らせテスト", description="定期お知らせのテスト送信を行います（現在の設定内容を今すぐ送信）。")
 @app_commands.checks.has_permissions(administrator=True)
 async def test_announcement(interaction: discord.Interaction):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     
     config = load_announce_config()
     channel_id = config.get("channel_id", 0)
     if channel_id == 0:
-        await interaction.response.send_message("❌ 定期お知らせの送信チャンネルが設定されていません。", ephemeral=True)
+        await interaction.followup.send("❌ 定期お知らせの送信チャンネルが設定されていません。", ephemeral=True)
         return
     
     channel = bot.get_channel(channel_id)
     if not channel:
-        await interaction.response.send_message("❌ 設定されたチャンネルが見つかりませんでした。", ephemeral=True)
+        await interaction.followup.send("❌ 設定されたチャンネルが見つかりませんでした。", ephemeral=True)
         return
     
     embed = discord.Embed(
@@ -812,13 +784,14 @@ async def test_announcement(interaction: discord.Interaction):
     )
     embed.set_footer(text=f"テスト送信時刻: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     await channel.send(embed=embed)
-    await interaction.response.send_message(f"✅ 設定されているチャンネル ({channel.mention}) にテスト送信を行いました！", ephemeral=True)
+    await interaction.followup.send(f"✅ 設定されているチャンネル ({channel.mention}) にテスト送信を行いました！", ephemeral=True)
 
 @bot.tree.command(name="お知らせ解除", description="定期お知らせの設定を消去し、自動送信を停止します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def clear_announcement(interaction: discord.Interaction):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     
     if scheduled_announcement.is_running():
@@ -830,14 +803,15 @@ async def clear_announcement(interaction: discord.Interaction):
         "message": "ショップは24時間稼働中です。\nご用件やチケット作成はチャンネル内のパネルからどうぞ！"
     }
     save_announce_config(default_config)
-    await interaction.response.send_message("✅ 定期お知らせの設定を消去し、自動送信を停止しました。", ephemeral=True)
+    await interaction.followup.send("✅ 定期お知らせの設定を消去し、自動送信を停止しました。", ephemeral=True)
 
 @bot.tree.command(name="簡易自販機設置", description="自販機パネルを送信します（既存の保存済み自販機から選択、または新規作成可能）。")
 @app_commands.describe(machine_name="新しく作成する場合の自販機名（既存から選ぶ場合は空欄でもOK）")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_vending(interaction: discord.Interaction, machine_name: str = None):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     
     data = load_vending()
@@ -857,11 +831,11 @@ async def setup_vending(interaction: discord.Interaction, machine_name: str = No
                 vending_embed.add_field(name=info["name"], value=field_value, inline=False)
                 
         await interaction.channel.send(embed=vending_embed, view=VendingMainView(machine_name))
-        await interaction.response.send_message(f"✅ 自販機パネル（識別名: **{machine_name}**）を設置しました！", ephemeral=True)
+        await interaction.followup.send(f"✅ 自販機パネル（識別名: **{machine_name}**）を設置しました！", ephemeral=True)
         return
 
     if not data:
-        await interaction.response.send_message("❌ 保存されている自販機がありません。コマンドの引数に新しい自販機名を入力して作成してください。(例: `/簡易自販機設置 machine_name:メイン自販機`)", ephemeral=True)
+        await interaction.followup.send("❌ 保存されている自販機がありません。コマンドの引数に新しい自販機名を入力して作成してください。(例: `/簡易自販機設置 machine_name:メイン自販機`)", ephemeral=True)
         return
 
     class VendingMachineSelectView(discord.ui.View):
@@ -893,14 +867,15 @@ async def setup_vending(interaction: discord.Interaction, machine_name: str = No
             select.callback = select_callback
             self.add_item(select)
 
-    await interaction.response.send_message("👇 設置したい保存済みの自販機を選択してください：", view=VendingMachineSelectView(), ephemeral=True)
+    await interaction.followup.send("👇 設置したい保存済みの自販機を選択してください：", view=VendingMachineSelectView(), ephemeral=True)
 
 @bot.tree.command(name="簡易自販機一覧", description="指定した自販機の登録商品一覧を確認します。")
 @app_commands.describe(machine_name="確認したい自販機の名前")
 @app_commands.checks.has_permissions(administrator=True)
 async def vending_list(interaction: discord.Interaction, machine_name: str):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     data = load_vending()
     items = data.get(machine_name, {})
@@ -911,48 +886,50 @@ async def vending_list(interaction: discord.Interaction, machine_name: str):
         stock_val = info.get('stock', 99)
         stock_str = "∞" if stock_val == 99 else str(stock_val)
         embed.add_field(name=f"ID: {i_id}", value=f"商品名: {info['name']} | 在庫: {stock_str}個", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="簡易商品削除", description="指定した自販機から特定の商品を削除します。")
 @app_commands.describe(machine_name="対象の自販機名", item_id="削除する商品のID (例: 1)")
 @app_commands.checks.has_permissions(administrator=True)
 async def vending_delete(interaction: discord.Interaction, machine_name: str, item_id: str):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     data = load_vending()
     if machine_name in data and item_id in data[machine_name]:
         deleted_name = data[machine_name][item_id]["name"]
         del data[machine_name][item_id]
         save_vending(data)
-        await interaction.response.send_message(f"✅ 自販機「{machine_name}」の商品「{deleted_name}」(ID: {item_id}) を削除しました！", ephemeral=True)
+        await interaction.followup.send(f"✅ 自販機「{machine_name}」の商品「{deleted_name}」(ID: {item_id}) を削除しました！", ephemeral=True)
     else:
-        await interaction.response.send_message(f"❌ 指定された自販機名または商品IDが見つかりませんでした。", ephemeral=True)
+        await interaction.followup.send(f"❌ 指定された自販機名または商品IDが見つかりませんでした。", ephemeral=True)
 
 @bot.tree.command(name="簡易自販機削除", description="指定した自販機自体（登録されている全商品データ含む）を削除します。")
 @app_commands.describe(machine_name="削除したい自販機の名前")
 @app_commands.checks.has_permissions(administrator=True)
 async def vending_machine_delete(interaction: discord.Interaction, machine_name: str):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     
     data = load_vending()
     if machine_name in data:
         del data[machine_name]
         save_vending(data)
-        await interaction.response.send_message(f"🗑️ 自販機「**{machine_name}**」をデータごと完全に削除しました。", ephemeral=True)
+        await interaction.followup.send(f"🗑️ 自販機「**{machine_name}**」をデータごと完全に削除しました。", ephemeral=True)
     else:
-        await interaction.response.send_message(f"❌ 指定された自販機名「{machine_name}」が見つかりませんでした。", ephemeral=True)
+        await interaction.followup.send(f"❌ 指定された自販機名「{machine_name}」が見つかりませんでした。", ephemeral=True)
 
 @bot.tree.command(name="バックアップ", description="メンバーバックアップを手動で強制実行し、登録人数を表示します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def backup_command(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     
-    await interaction.response.defer(ephemeral=True)
+    await ensure_deferred(interaction, ephemeral=True)
     success, count = perform_manual_backup()
     
     if success:
@@ -964,10 +941,10 @@ async def backup_command(interaction: discord.Interaction):
 @app_commands.checks.has_permissions(administrator=True)
 async def force_join(interaction: discord.Interaction):
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
 
-    await interaction.response.defer(ephemeral=True)
+    await ensure_deferred(interaction, ephemeral=True)
     db = load_data()
     if not db:
         await interaction.followup.send("❌ スプレッドシートに認証データが登録されていません。", ephemeral=True)
@@ -1014,14 +991,16 @@ async def force_join(interaction: discord.Interaction):
 @app_commands.describe(message="ボットに発言させたい言葉")
 @app_commands.checks.has_permissions(administrator=True)
 async def say_command(interaction: discord.Interaction, message: str):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     await interaction.channel.send(message)
-    await interaction.response.send_message("✅ メッセージを送信しました。", ephemeral=True)
+    await interaction.followup.send("✅ メッセージを送信しました。", ephemeral=True)
 
 @bot.tree.command(name="ヘルプ", description="ボットのコマンド一覧と使い方を表示します。")
 async def help_cmd(interaction: discord.Interaction):
+    await ensure_deferred(interaction, ephemeral=True)
     embed = discord.Embed(
         title="🤖 ボット機能・コマンド一覧",
         description="このサーバーで利用できるコマンドと機能のご案内です。",
@@ -1039,16 +1018,17 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="💾 バックアップ＆呼び出し", value="`/バックアップ` - メンバーデータを手動でバックアップし、登録人数を表示します。\n`/一括呼び戻し` - 登録されている全ユーザーをサーバーに一斉呼び戻しします。", inline=False)
     embed.add_field(name="💥 チャンネル管理", value="`/チャンネル再作成` - 現在のチャンネルを初期化（作り直し）します。", inline=False)
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="チャンネル再作成", description="現在のチャンネルを削除し、同じ設定の新しいチャンネルに作り直します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def nuke(interaction: discord.Interaction):
+    await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
-        await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
+        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
     
-    await interaction.response.send_message("💥 チャンネルを初期化しています...", ephemeral=True)
+    await interaction.followup.send("💥 チャンネルを初期化しています...", ephemeral=True)
     
     channel = interaction.channel
     position = channel.position

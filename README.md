@@ -83,3 +83,13 @@ PayPay通信には時間がかかることがあるため、ログインコマ�
 `/設定`、PayPayのログイン情報、Kyashの認証セッションは、`GOOGLE_CREDENTIALS_JSON` と `SPREADSHEET_NAME` が設定されている場合、Googleスプレッドシートへ保存します。保存先のワークシートは `server_config`、`paypay_accounts`、`kyash_accounts` です。Discord上の設定・ログイン・認証結果は非公開応答で表示します。
 
 Googleスプレッドシート保存を有効にするには、サービスアカウントのメールアドレスを対象スプレッドシートへ編集者として共有してください。
+
+## 有料自販機データの永続化
+
+有料自販機の作成情報、商品名、説明、PayPay価格、Kyash価格、設定、クーポン、購入済みリンク情報はGoogleスプレッドシートへ保存されます。保存先のワークシートは `paid_vending_items`、`paid_stock_notifications`、`paid_coupons`、`paid_role_assignments`、`paid_used_paypay_links` です。
+
+有料自販機の在庫本文は現在も `stock_files` フォルダのテキストファイルを使用します。Renderのように再起動でローカルファイルが消える環境では、再起動後も在庫本文まで維持するには、在庫をGoogle Driveやデータベースへ移す追加対応が必要です。
+
+## Discordの「アプリケーションが応答しませんでした」対策
+
+Googleスプレッドシート保存は変更せず、スラッシュコマンドの開始直後にDiscordへ非公開の保留応答を返す方式にしています。その後、読み込み・保存が完了したら `followup` で結果を返します。保存はバックグラウンドで完了扱いにせず、シートへの書き込み完了を待ってから結果を返すため、保存途中の再起動による欠落を防ぎます。
