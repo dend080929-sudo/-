@@ -40,10 +40,24 @@ async def global_interaction_check(interaction: discord.Interaction) -> bool:
     # スラッシュコマンドは、処理内容に関係なく最初に保留応答を返す。
     # ボタンやモーダルは各処理側の応答を使う。
     if interaction.type == discord.InteractionType.application_command:
-        await ensure_deferred(interaction, ephemeral=True)
+        # 自販機パネル本体はサーバー全員に公開する必要がある。
+        is_public_panel = getattr(interaction.command, "name", None) == "有料自販機設置"
+        await ensure_deferred(interaction, ephemeral=not is_public_panel)
     return True
 
 bot.tree.interaction_check = global_interaction_check
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        message = "このコマンドを実行する権限がありません。"
+    else:
+        print(f"スラッシュコマンドエラー: {error}")
+        message = "コマンドの処理中にエラーが発生しました。時間を置いて再試行してください。"
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+    else:
+        await interaction.response.send_message(message, ephemeral=True)
 
 # Cogsフォルダからの拡張機能（PayPay決済等）自動読み込み設定
 async def setup_hook():

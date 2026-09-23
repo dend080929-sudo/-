@@ -17,6 +17,10 @@ def is_allowed():
         if interaction.guild and interaction.user.id == interaction.guild.owner_id:
             return True
 
+        # サーバー管理者も管理コマンドを利用可能にする
+        if interaction.guild and getattr(interaction.user.guild_permissions, "administrator", False):
+            return True
+
         # 3. 指定したIDリストに含まれているかチェック
         if interaction.user.id in ALLOWED_USER_IDS:
             return True
