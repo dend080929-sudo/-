@@ -21,8 +21,46 @@ def save_accounts(accounts: dict) -> None:
     save_json_store(MAIL_STORE_SHEET, accounts, MAIL_STORE_FILE)
 
 
+def get_account(address: str) -> dict | None:
+    return load_accounts().get(address.lower().strip())
+
+
+def get_current_address(user_id: int) -> str | None:
+    accounts = load_accounts()
+    candidates = [
+        (address, info)
+        for address, info in accounts.items()
+        if str(info.get("user_id")) == str(user_id) and not info.get("display_deleted", False)
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[1].get("created_at", ""), reverse=True)
+    return candidates[0][0]
+
+
+def get_panel_info(user_id: int) -> dict:
+    info = load_accounts().get(f"__panel__:{user_id}", {})
+    return info if isinstance(info, dict) else {}
+
+
+def save_panel_info(user_id: int, channel_id: int, message_id: int) -> None:
+    accounts = load_accounts()
+    accounts[f"__panel__:{user_id}"] = {
+        "channel_id": str(channel_id),
+        "message_id": str(message_id),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_accounts(accounts)
+
+
 def issue_address(user_id: int) -> str:
     accounts = load_accounts()
+    # 再発行時は、以前の表示を隠し、以前のアドレスへの新着を保管側へ送る
+    for address, info in accounts.items():
+        if not address.startswith("__panel__:") and str(info.get("user_id")) == str(user_id):
+            info["display_deleted"] = True
+            info["hidden_at"] = datetime.now(timezone.utc).isoformat()
+
     alphabet = string.ascii_lowercase + string.digits
     while True:
         local = "".join(secrets.choice(alphabet) for _ in range(10))
@@ -38,20 +76,19 @@ def issue_address(user_id: int) -> str:
     return address
 
 
-def hide_address(address: str, user_id: int) -> bool:
+def hide_current_address(user_id: int) -> str | None:
+    address = get_current_address(user_id)
+    if not address:
+        return None
     accounts = load_accounts()
-    info = accounts.get(address)
-    if not info or str(info.get("user_id")) != str(user_id):
-        return False
-    info["display_deleted"] = True
-    info["hidden_at"] = datetime.now(timezone.utc).isoformat()
-    accounts[address] = info
+    accounts[address]["display_deleted"] = True
+    accounts[address]["hidden_at"] = datetime.now(timezone.utc).isoformat()
     save_accounts(accounts)
-    return True
+    return address
 
 
 def resolve_destination(address: str) -> str:
-    info = load_accounts().get(address.lower().strip())
+    info = get_account(address)
     if info and not info.get("display_deleted", False):
         return "inbox"
     return "archive"
@@ -66,17 +103,11 @@ async def deliver_incoming(bot, payload: dict) -> None:
     import discord
 
     recipient = str(payload.get("to", "")).lower().strip()
+    info = get_account(recipient)
+    destination = resolve_destination(recipient)
     sender = clean_text(str(payload.get("from", "不明")), 500)
     subject = clean_text(str(payload.get("subject", "（件名なし）")), 500)
     body = clean_text(str(payload.get("text") or payload.get("body") or "（本文なし）"))
-    destination = resolve_destination(recipient)
-    env_name = "MAIL_INBOX_CHANNEL_ID" if destination == "inbox" else "MAIL_ARCHIVE_CHANNEL_ID"
-    channel_id = int(os.environ.get(env_name, "0"))
-    channel = bot.get_channel(channel_id) if channel_id else None
-    if channel is None and channel_id:
-        channel = await bot.fetch_channel(channel_id)
-    if channel is None:
-        raise RuntimeError(f"{env_name} が未設定、またはチャンネルが見つかりません")
 
     embed = discord.Embed(
         title="📨 メール受信" if destination == "inbox" else "📦 メール保管（表示削除後）",
@@ -90,4 +121,19 @@ async def deliver_incoming(bot, payload: dict) -> None:
     message_id = clean_text(str(payload.get("message_id", "")), 200)
     if message_id:
         embed.set_footer(text=f"Message-ID: {message_id}")
+
+    if destination == "inbox" and info and info.get("user_id"):
+        panel = get_panel_info(int(info["user_id"]))
+        channel_id = int(panel.get("channel_id", "0"))
+    else:
+        channel_id = 0
+
+    env_name = "MAIL_INBOX_CHANNEL_ID" if destination == "inbox" else "MAIL_ARCHIVE_CHANNEL_ID"
+    if not channel_id:
+        channel_id = int(os.environ.get(env_name, "0"))
+    channel = bot.get_channel(channel_id) if channel_id else None
+    if channel is None and channel_id:
+        channel = await bot.fetch_channel(channel_id)
+    if channel is None:
+        raise RuntimeError(f"{env_name} が未設定、またはチャンネルが見つかりません")
     await channel.send(embed=embed)
