@@ -6,6 +6,7 @@ from discord.ext import commands
 
 from interaction_guard import ensure_deferred
 from mail_service import (
+    delete_received_messages,
     get_current_address,
     hide_current_address,
     issue_address,
@@ -52,7 +53,9 @@ class MailDeleteButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         await ensure_deferred(interaction, ephemeral=True)
+        address = get_current_address(interaction.user.id)
         hide_current_address(interaction.user.id)
+        await delete_received_messages(interaction.client, address)
         await interaction.message.edit(embed=personal_embed(interaction.user.id), view=MailPanelView())
 
 
