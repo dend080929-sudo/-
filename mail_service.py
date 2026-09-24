@@ -30,6 +30,7 @@ def get_current_address(user_id: int) -> str | None:
     candidates = [
         (address, info)
         for address, info in accounts.items()
+        if not address.startswith("__")
         if str(info.get("user_id")) == str(user_id) and not info.get("display_deleted", False)
     ]
     if not candidates:
@@ -57,7 +58,7 @@ def issue_address(user_id: int) -> str:
     accounts = load_accounts()
     # 再発行時は、以前の表示を隠し、以前のアドレスへの新着を保管側へ送る
     for address, info in accounts.items():
-        if not address.startswith("__panel__:") and str(info.get("user_id")) == str(user_id):
+        if not address.startswith("__") and str(info.get("user_id")) == str(user_id):
             info["display_deleted"] = True
             info["hidden_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -85,6 +86,91 @@ def hide_current_address(user_id: int) -> str | None:
     accounts[address]["hidden_at"] = datetime.now(timezone.utc).isoformat()
     save_accounts(accounts)
     return address
+
+
+def _gmail_key(user_id: int) -> str:
+    return f"__gmail__:{user_id}"
+
+
+def get_gmail_info(user_id: int) -> dict:
+    info = load_accounts().get(_gmail_key(user_id), {})
+    return info if isinstance(info, dict) else {}
+
+
+def register_gmail(user_id: int, gmail: str) -> str:
+    gmail = gmail.strip().lower()
+    if "@" not in gmail or not gmail.endswith("@gmail.com") or gmail.count("@") != 1:
+        raise ValueError("Gmailアドレス（xxx@gmail.com）を入力してください。")
+    local = gmail[:-10]
+    if not local or "+" in local or any(character.isspace() for character in gmail):
+        raise ValueError("通常のGmailアドレス（+文字列なし）を入力してください。")
+    accounts = load_accounts()
+    old = accounts.get(_gmail_key(user_id), {})
+    accounts[_gmail_key(user_id)] = {
+        "user_id": str(user_id),
+        "gmail": gmail,
+        "current_alias": old.get("current_alias", ""),
+        "history": old.get("history", []),
+        "registered_at": old.get("registered_at") or datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_accounts(accounts)
+    return gmail
+
+
+def issue_gmail_alias(user_id: int) -> str:
+    accounts = load_accounts()
+    key = _gmail_key(user_id)
+    info = accounts.get(key, {})
+    gmail = str(info.get("gmail", "")).lower().strip()
+    if not gmail.endswith("@gmail.com"):
+        raise ValueError("先にGmailを登録してください。")
+    local = gmail[:-10]
+    alphabet = string.ascii_lowercase + string.digits
+    token = ""
+    while not token:
+        token = "".join(secrets.choice(alphabet) for _ in range(8))
+    alias = f"{local}+{token}@gmail.com"
+    history = list(info.get("history", []))
+    history.append({"alias": alias, "created_at": datetime.now(timezone.utc).isoformat(), "deleted": False})
+    info["current_alias"] = alias
+    info["history"] = history[-100:]
+    info["updated_at"] = datetime.now(timezone.utc).isoformat()
+    accounts[key] = info
+    save_accounts(accounts)
+    return alias
+
+
+def clear_gmail_alias(user_id: int) -> bool:
+    accounts = load_accounts()
+    key = _gmail_key(user_id)
+    info = accounts.get(key, {})
+    if not info.get("gmail"):
+        return False
+    alias = info.get("current_alias", "")
+    if alias:
+        for item in info.get("history", []):
+            if isinstance(item, dict) and item.get("alias") == alias:
+                item["deleted"] = True
+    info["current_alias"] = ""
+    info["updated_at"] = datetime.now(timezone.utc).isoformat()
+    accounts[key] = info
+    save_accounts(accounts)
+    return True
+
+
+def unregister_gmail(user_id: int) -> bool:
+    accounts = load_accounts()
+    key = _gmail_key(user_id)
+    existed = key in accounts and bool(accounts[key].get("gmail"))
+    if existed:
+        info = accounts[key]
+        info["current_alias"] = ""
+        info["unregistered_at"] = datetime.now(timezone.utc).isoformat()
+        info["gmail"] = ""
+        accounts[key] = info
+        save_accounts(accounts)
+    return existed
 
 
 async def delete_received_messages(bot, address: str | None) -> None:
@@ -145,6 +231,19 @@ async def deliver_incoming(bot, payload: dict) -> None:
     sender = clean_text(str(payload.get("from", "不明")), 500)
     subject = clean_text(str(payload.get("subject", "（件名なし）")), 500)
     body = clean_text(str(payload.get("text") or payload.get("body") or "（本文なし）"))
+    attachments = payload.get("attachments") or []
+    if isinstance(attachments, list) and attachments:
+        attachment_lines = []
+        for item in attachments[:20]:
+            if not isinstance(item, dict):
+                continue
+            name = clean_text(str(item.get("filename") or "添付ファイル"), 160)
+            content_type = clean_text(str(item.get("content_type") or "不明"), 100)
+            size = int(item.get("size") or 0)
+            size_text = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} B"
+            attachment_lines.append(f"・{name}（{content_type}、{size_text}）")
+        if attachment_lines:
+            body += "\n\n📎 添付ファイル\n" + "\n".join(attachment_lines)
 
     embed = discord.Embed(
         title="📨 メール受信" if destination == "inbox" else "📦 メール保管（表示削除後）",
