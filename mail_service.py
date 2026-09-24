@@ -87,6 +87,43 @@ def hide_current_address(user_id: int) -> str | None:
     return address
 
 
+async def delete_received_messages(bot, address: str | None) -> None:
+    """指定アドレスに紐づくDiscord上の受信メール表示を削除する。"""
+    if not address:
+        return
+    accounts = load_accounts()
+    info = accounts.get(address.lower().strip(), {})
+    panel_message_ids = list(info.get("received_message_ids", []))
+    if not panel_message_ids:
+        return
+    panel = get_panel_info(int(info.get("user_id", 0)))
+    channel_id = int(panel.get("channel_id", "0"))
+    channel = bot.get_channel(channel_id) if channel_id else None
+    if channel is None and channel_id:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            channel = None
+    if channel is not None:
+        for message_id in panel_message_ids:
+            try:
+                message = await channel.fetch_message(int(message_id))
+                await message.delete()
+            except Exception as exc:
+                print(f"受信メール表示の削除をスキップ: {exc}")
+        # 旧版でID保存されていなかった受信メールも、Botの受信Embedだけ削除する。
+        try:
+            async for message in channel.history(limit=100):
+                if message.author.id != bot.user.id:
+                    continue
+                if any((embed.title or "").startswith("📨 メール受信") for embed in message.embeds):
+                    await message.delete()
+        except Exception as exc:
+            print(f"過去の受信メール表示の削除をスキップ: {exc}")
+    info["received_message_ids"] = []
+    save_accounts(accounts)
+
+
 def resolve_destination(address: str) -> str:
     info = get_account(address)
     if info and not info.get("display_deleted", False):
@@ -116,8 +153,12 @@ async def deliver_incoming(bot, payload: dict) -> None:
     )
     embed.add_field(name="宛先", value=f"`{recipient or '不明'}`", inline=False)
     embed.add_field(name="送信者", value=f"`{sender}`", inline=False)
-    embed.add_field(name="件名", value=f"`{subject}`", inline=False)
-    embed.add_field(name="本文", value=f"```\n{body}\n```", inline=False)
+    embed.add_field(name="件名", value=f"`{subject[:900]}`", inline=False)
+    # DiscordのEmbedフィールド値は1024文字まで。長い認証メールでも502にしない。
+    body_chunks = [body[index:index + 900] for index in range(0, len(body), 900)] or ["（本文なし）"]
+    for index, chunk in enumerate(body_chunks[:4], start=1):
+        title = "本文" if index == 1 else f"本文（続き{index}）"
+        embed.add_field(name=title, value=f"```\n{chunk}\n```", inline=False)
     message_id = clean_text(str(payload.get("message_id", "")), 200)
     if message_id:
         embed.set_footer(text=f"Message-ID: {message_id}")
@@ -136,4 +177,12 @@ async def deliver_incoming(bot, payload: dict) -> None:
         channel = await bot.fetch_channel(channel_id)
     if channel is None:
         raise RuntimeError(f"{env_name} が未設定、またはチャンネルが見つかりません")
-    await channel.send(embed=embed)
+    sent_message = await channel.send(embed=embed)
+    if destination == "inbox" and info:
+        accounts = load_accounts()
+        stored_info = accounts.get(recipient, info)
+        ids = list(stored_info.get("received_message_ids", []))
+        ids.append(str(sent_message.id))
+        stored_info["received_message_ids"] = ids[-50:]
+        accounts[recipient] = stored_info
+        save_accounts(accounts)
