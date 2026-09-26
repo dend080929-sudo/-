@@ -67,15 +67,9 @@ class AutocatPrefixMiddleware:
         headers = list(captured.get("headers", []))
         content_type = next((v.lower() for k, v in headers if k.lower() == "content-type"), "")
 
-        if (
-            "text/" in content_type
-            or "javascript" in content_type
-            or "application/json" in content_type
-        ):
-            body = self._root_url_re.sub(
-                lambda m: m.group("quote") + self.prefix + b"/" + m.group("tail"),
-                body,
-            )
+        # HTML/JavaScript URLs are fixed in the source files. Do not rewrite
+        # JavaScript response bodies at runtime: regex literals and embedded
+        # code can otherwise be corrupted and make buttons stop responding.
 
         rewritten_headers = []
         for key, value in headers:

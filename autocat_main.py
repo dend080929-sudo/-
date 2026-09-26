@@ -989,6 +989,13 @@ def auth_login():
     state = secrets.token_urlsafe(24)
     session["oauth_state"] = state
     oauth_next = request.args.get("next", "/chat")
+    # The app is externally mounted below /autocat, while Flask sees its
+    # internal path without that prefix. Normalize both forms before storing
+    # the OAuth return target.
+    if oauth_next.startswith("/autocat/"):
+        oauth_next = oauth_next[len("/autocat"):]
+    elif oauth_next == "/autocat":
+        oauth_next = "/"
     allowed_next = {"/", "/chat", "/chat/admin", "/admin/panel", "/admin/vip"}
     session["oauth_next"] = oauth_next if oauth_next in allowed_next else "/chat"
     params = {
