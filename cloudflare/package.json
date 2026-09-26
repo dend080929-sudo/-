@@ -1,0 +1,6 @@
+{
+  "name": "discord-mail-router",
+  "private": true,
+  "type": "module",
+  "dependencies": {}
+}
