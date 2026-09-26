@@ -43,12 +43,13 @@ BOT_LOOP = None
 
 
 class AutocatPrefixMiddleware:
-    """Mount the unmodified AUTOCAT app below /autocat without leaking root URLs."""
+    """Mount AUTOCAT below /autocat and rewrite every root-relative app URL."""
 
-    _path_re = re.compile(
-        rb"(?P<quote>['\"(=])/(?P<path>(?:api|auth|account|admin|vip|chat|chat-assets|chat-sw\.js|account-sw\.js|static)(?:[/?#'\"`)]|$))"
+    # Covers HTML href/src/action, JavaScript fetch/location strings, JSON URLs,
+    # and future routes without maintaining a list of every current endpoint.
+    _root_url_re = re.compile(
+        rb"(?P<quote>['\"(=])/(?!(?:/|autocat(?:/|['\"?#)`]|$)))(?P<tail>[^'\"`\s<)]*)"
     )
-    _root_re = re.compile(rb"(?P<quote>['\"(=])/(?P<tail>[?#'\"`)]|$)")
 
     def __init__(self, application, prefix="/autocat"):
         self.application = application
@@ -66,19 +67,19 @@ class AutocatPrefixMiddleware:
         headers = list(captured.get("headers", []))
         content_type = next((v.lower() for k, v in headers if k.lower() == "content-type"), "")
 
-        if "text/html" in content_type or "javascript" in content_type or "text/css" in content_type:
-            body = self._path_re.sub(
-                lambda m: m.group("quote") + self.prefix + b"/" + m.group("path"),
-                body,
-            )
-            body = self._root_re.sub(
+        if (
+            "text/" in content_type
+            or "javascript" in content_type
+            or "application/json" in content_type
+        ):
+            body = self._root_url_re.sub(
                 lambda m: m.group("quote") + self.prefix + b"/" + m.group("tail"),
                 body,
             )
 
         rewritten_headers = []
         for key, value in headers:
-            if key.lower() == "location" and value.startswith("/") and not value.startswith("/autocat/"):
+            if key.lower() in {"location", "service-worker-allowed"} and value.startswith("/") and not value.startswith("/autocat/"):
                 value = "/autocat" + value
             if key.lower() == "content-length":
                 value = str(len(body))

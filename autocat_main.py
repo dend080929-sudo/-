@@ -1087,6 +1087,8 @@ def auth_status():
         value.strip() for value in os.getenv("CHAT_ADMIN_DISCORD_IDS", "").split(",")
         if value.strip().isdigit()
     }
+    if ADMIN_USER.isdigit():
+        chat_admin_ids.add(ADMIN_USER)
     response = jsonify({
         "logged_in": bool(user_id),
         "discord_id": user_id or None,
