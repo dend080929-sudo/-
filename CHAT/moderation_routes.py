@@ -12,11 +12,15 @@ from CHAT.chat_store import ChatError, ChatPermissionError, ChatStore
 
 
 def _admin_ids() -> set[str]:
-    return {
+    ids = {
         item.strip()
         for item in os.getenv("CHAT_ADMIN_DISCORD_IDS", "").split(",")
         if item.strip().isdigit()
     }
+    admin_user = os.getenv("ADMIN_USER", "").strip()
+    if admin_user.isdigit():
+        ids.add(admin_user)
+    return ids
 
 
 def _csrf_token() -> str:

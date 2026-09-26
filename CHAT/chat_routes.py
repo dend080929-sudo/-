@@ -25,11 +25,15 @@ _notify_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chat-no
 
 
 def _admin_ids() -> set[str]:
-    return {
+    ids = {
         item.strip()
         for item in os.getenv("CHAT_ADMIN_DISCORD_IDS", "").split(",")
         if item.strip().isdigit()
     }
+    admin_user = os.getenv("ADMIN_USER", "").strip()
+    if admin_user.isdigit():
+        ids.add(admin_user)
+    return ids
 
 
 def _csrf_token() -> str:
