@@ -14,7 +14,7 @@
     <div class="brand">AUTOCAT <span>JP</span></div>
     <p id="message">アクセスを確認しています。少しお待ちください。</p>
     <div class="spinner" aria-hidden="true"></div>
-    <form id="access-form" method="post" action="/api/access/identify">
+    <form id="access-form" method="post" action="/autocat/api/access/identify">
       <input type="hidden" name="nonce" value="{{ nonce }}">
       <input type="hidden" name="next" value="{{ next_url }}">
       <input id="access-fingerprint" type="hidden" name="fingerprint">
