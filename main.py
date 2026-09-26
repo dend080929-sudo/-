@@ -5,6 +5,7 @@ import hmac
 import shutil
 import threading
 import time
+import re
 from datetime import datetime
 from flask import Flask, request
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
@@ -40,6 +41,52 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 app = Flask(__name__)
 BOT_LOOP = None
 
+
+class AutocatPrefixMiddleware:
+    """Mount the unmodified AUTOCAT app below /autocat without leaking root URLs."""
+
+    _path_re = re.compile(
+        rb"(?P<quote>['\"(=])/(?P<path>(?:api|auth|account|admin|vip|chat|chat-assets|chat-sw\.js|account-sw\.js|static)(?:[/?#'\"`)]|$))"
+    )
+    _root_re = re.compile(rb"(?P<quote>['\"(=])/(?P<tail>[?#'\"`)]|$)")
+
+    def __init__(self, application, prefix="/autocat"):
+        self.application = application
+        self.prefix = prefix.encode("ascii")
+
+    def __call__(self, environ, start_response):
+        captured = {}
+
+        def capture_start(status, headers, exc_info=None):
+            captured["status"] = status
+            captured["headers"] = headers
+            captured["exc_info"] = exc_info
+
+        body = b"".join(self.application(environ, capture_start))
+        headers = list(captured.get("headers", []))
+        content_type = next((v.lower() for k, v in headers if k.lower() == "content-type"), "")
+
+        if "text/html" in content_type or "javascript" in content_type or "text/css" in content_type:
+            body = self._path_re.sub(
+                lambda m: m.group("quote") + self.prefix + b"/" + m.group("path"),
+                body,
+            )
+            body = self._root_re.sub(
+                lambda m: m.group("quote") + self.prefix + b"/" + m.group("tail"),
+                body,
+            )
+
+        rewritten_headers = []
+        for key, value in headers:
+            if key.lower() == "location" and value.startswith("/") and not value.startswith("/autocat/"):
+                value = "/autocat" + value
+            if key.lower() == "content-length":
+                value = str(len(body))
+            rewritten_headers.append((key, value))
+
+        start_response(captured.get("status", "500 Internal Server Error"), rewritten_headers, captured.get("exc_info"))
+        return [body]
+
 # にゃんこ大戦争代行Web版。失敗しても既存Discord Botは起動できるよう分離して読み込む。
 AUTOCAT_APP = None
 try:
@@ -57,6 +104,7 @@ try:
     )
     import autocat_main as _autocat_module
     AUTOCAT_APP = _autocat_module.app
+    AUTOCAT_APP.wsgi_app = AutocatPrefixMiddleware(AUTOCAT_APP.wsgi_app)
     app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {"/autocat": AUTOCAT_APP.wsgi_app})
     print("✅ にゃんこ代行Web版を /autocat に接続しました")
 except Exception as exc:
@@ -70,6 +118,7 @@ async def global_interaction_check(interaction: discord.Interaction) -> bool:
         is_public_panel = getattr(interaction.command, "name", None) in {
             "有料自販機設置",
             "メールパネル設置",
+            "にゃんこ代行",
         }
         await ensure_deferred(interaction, ephemeral=not is_public_panel)
     return True
@@ -1099,7 +1148,7 @@ async def help_cmd(interaction: discord.Interaction):
 
 class AutocatLinkView(discord.ui.View):
     def __init__(self, base_url: str):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
         self.add_item(discord.ui.Button(label="にゃんこ代行画面を開く", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/"))
         self.add_item(discord.ui.Button(label="Discordログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/autocat/"))
         self.add_item(discord.ui.Button(label="VIP管理画面ログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/autocat/admin/vip"))
@@ -1115,11 +1164,17 @@ async def autocat_link(interaction: discord.Interaction):
     if not base_url:
         await interaction.followup.send("RENDER_EXTERNAL_URLまたはPUBLIC_BASE_URLが未設定です。", ephemeral=True)
         return
-    await interaction.followup.send(
+    panel_message = await interaction.followup.send(
         "完全版のにゃんこ代行画面です。ログイン後、引き継ぎコード・認証番号・各種設定を入力できます。",
         view=AutocatLinkView(base_url),
-        ephemeral=True,
+        ephemeral=False,
+        wait=True,
     )
+    try:
+        await panel_message.pin(reason="にゃんこ代行の固定パネル")
+    except (discord.Forbidden, discord.HTTPException):
+        # ピン留め権限がない場合でも、公開パネル自体は残す。
+        pass
 
 @bot.tree.command(name="チャンネル再作成", description="現在のチャンネルを削除し、同じ設定の新しいチャンネルに作り直します。")
 @app_commands.checks.has_permissions(administrator=True)
