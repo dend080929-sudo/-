@@ -92,7 +92,7 @@ function renderMessages(messages){
   const fragment=document.createDocumentFragment();
   if(state.room==='dm'&&state.dmTargetInfo){
     const head=document.createElement('div');head.className='dm-head';
-    head.appendChild(actionButton('← DM一覧',()=>{state.dmTarget='';state.dmTargetInfo=null;history.replaceState(null,'','/chat?room=dm');loadState();}));
+    head.appendChild(actionButton('← DM一覧',()=>{state.dmTarget='';state.dmTargetInfo=null;history.replaceState(null,'','/autocat/chat?room=dm');loadState();}));
     const title=document.createElement('strong');title.textContent=`${state.dmTargetInfo.name} / ${state.dmTargetInfo.id}`;head.appendChild(title);fragment.appendChild(head);
   }
   if(!messages.length){const empty=document.createElement('div');empty.className='empty';empty.textContent=state.room==='admin'?'運営からのお知らせはまだありません。':state.room==='dm'?'DMはまだありません。':'まだメッセージがありません。';fragment.appendChild(empty);}
@@ -144,11 +144,11 @@ async function loadState(silent=false){
   try{
     let data;
     if(state.room==='dm'){
-      data=await api('/api/chat/dm/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:state.fingerprint,target_token:state.dmTarget})});
+      data=await api('/autocat/api/chat/dm/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:state.fingerprint,target_token:state.dmTarget})});
       state.actor=data.actor;state.restriction=data.restriction||null;state.dmTargetInfo=data.target||null;
       if(state.dmTarget)renderMessages(data.messages||[]);else renderConversations(data.conversations||[]);
     }else{
-      data=await api('/api/chat/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:state.fingerprint,room:state.room,after_id:0})});
+      data=await api('/autocat/api/chat/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:state.fingerprint,room:state.room,after_id:0})});
       state.actor=data.actor;state.restriction=data.restriction||null;renderMessages(data.messages||[]);
     }
     identityEl.textContent=state.actor.discord?`${state.actor.name} / ${state.actor.id}`:state.actor.id;
@@ -162,10 +162,10 @@ async function sendMessage(event){
   sendButton.disabled=true;
   try{
     if(state.room==='dm'){
-      await api('/api/chat/dm/messages',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint,target_token:state.dmTarget,content})});
+      await api('/autocat/api/chat/dm/messages',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint,target_token:state.dmTarget,content})});
     }else{
       const notify=state.room==='admin'&&notifyMode.value==='on';
-      await api('/api/chat/messages',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint,room:state.room,content,notify})});
+      await api('/autocat/api/chat/messages',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint,room:state.room,content,notify})});
     }
     input.value='';await loadState(true);messagesEl.scrollTop=messagesEl.scrollHeight;
   }catch(error){showToast(error.message,'error');}
@@ -204,7 +204,7 @@ function openDM(token){
 }
 
 function base64UrlToUint8Array(value){
-  const padding='='.repeat((4-value.length%4)%4);const raw=atob((value+padding).replace(/-/g,'+').replace(/_/g,'/'));
+  const padding='='.repeat((4-value.length%4)%4);const raw=atob((value+padding).replace(/-/g,'+').replace(/_/g,'/autocat/'));
   return Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));
 }
 
@@ -214,10 +214,10 @@ async function registerPush(promptUser=false){
   let permission=Notification.permission;
   if(promptUser&&permission==='default')permission=await Notification.requestPermission();
   if(permission!=='granted'){if(promptUser)throw new Error('通知が許可されませんでした。');return;}
-  const registration=await navigator.serviceWorker.register('/chat-sw.js',{scope:'/chat'});
+  const registration=await navigator.serviceWorker.register('/autocat/chat-sw.js',{scope:'/autocat/chat'});
   let subscription=await registration.pushManager.getSubscription();
   if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64UrlToUint8Array(config.vapidPublicKey)});
-  await api('/api/chat/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint,subscription:subscription.toJSON()})});
+  await api('/autocat/api/chat/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint,subscription:subscription.toJSON()})});
   notificationNotice.classList.remove('show');if(promptUser)showToast('運営通知をオンにしました。');
 }
 

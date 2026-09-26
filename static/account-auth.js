@@ -38,6 +38,6 @@ form.addEventListener('submit',async event=>{
     const response=await fetch(`/api/account/${config.mode}`,{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify(body)});
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(data.error||`通信エラー (${response.status})`);
-    location.assign(data.redirect||'/account');
+    location.assign(data.redirect||'/autocat/account');
   }catch(error){errorEl.textContent=error.message;submit.disabled=false;submit.textContent=config.mode==='register'?'アカウントを作成':'ログイン';}
 });
