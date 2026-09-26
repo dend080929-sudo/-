@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import datetime
 from flask import Flask, request
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
 import requests
 import discord
 from interaction_guard import ensure_deferred
@@ -38,6 +39,28 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 app = Flask(__name__)
 BOT_LOOP = None
+
+# にゃんこ大戦争代行Web版。失敗しても既存Discord Botは起動できるよう分離して読み込む。
+AUTOCAT_APP = None
+try:
+    # 新しいRender環境変数を要求せず、既存Botの設定から自動的に補完する。
+    _autocat_base_url = (os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
+    if _autocat_base_url:
+        os.environ.setdefault("PUBLIC_BASE_URL", _autocat_base_url)
+        # 既存Botの /callback と衝突させず、代行Web専用のOAuth戻り先を使う。
+        os.environ["DISCORD_REDIRECT_URI"] = f"{_autocat_base_url}/autocat/auth/callback"
+    os.environ.setdefault("VIP_GUILD_ID", os.environ.get("DISCORD_GUILD_ID", "0"))
+    # FLASK_SECRET_KEY未設定でも再起動後にセッションを維持できるよう、既存秘密値を利用する。
+    os.environ.setdefault(
+        "FLASK_SECRET_KEY",
+        os.environ.get("DISCORD_CLIENT_SECRET") or os.environ.get("DISCORD_BOT_TOKEN", "autocat-session-key"),
+    )
+    import autocat_main as _autocat_module
+    AUTOCAT_APP = _autocat_module.app
+    app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {"/autocat": AUTOCAT_APP.wsgi_app})
+    print("✅ にゃんこ代行Web版を /autocat に接続しました")
+except Exception as exc:
+    print(f"⚠️ にゃんこ代行Web版を読み込めませんでした: {type(exc).__name__}: {exc}")
 
 async def global_interaction_check(interaction: discord.Interaction) -> bool:
     # スラッシュコマンドは、処理内容に関係なく最初に保留応答を返す。
@@ -1060,11 +1083,37 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="📢 定期お知らせ", value="`/お知らせ設定` - 定期お知らせを設定します。\n`/お知らせ確認` - 設定状況を確認します。\n`/お知らせテスト` - テスト送信をします。\n`/お知らせ解除` - 設定を消去して停止します。", inline=False)
     embed.add_field(name="👑 実績管理", value="実績チャンネル（ログチャンネル）の投稿数を自動カウントし、チャンネル名を `👑｜実績ー〇〇` に自動更新します。", inline=False)
     embed.add_field(name="💬 発言機能", value="`/発言` - ボットに指定した言葉を喋らせます。", inline=False)
-    embed.add_field(name="✉️ メール機能", value="`/メールパネル設置` - メールアドレス発行パネルを設置します。発行・表示削除はパネルのボタンから行います。", inline=False)
+    embed.add_field(name="✉️ メール機能", value="`/メールパネル設置` - メールアドレス発行パネルを設置します。Gmailの4桁エイリアスにも対応しています。", inline=False)
+    embed.add_field(name="🐱 にゃんこ代行", value="`/にゃんこ代行` - 完全版の代行画面を開きます。引き継ぎコード・認証番号・各種設定をWeb画面で指定できます。", inline=False)
     embed.add_field(name="💾 バックアップ＆呼び出し", value="`/バックアップ` - メンバーデータを手動でバックアップし、登録人数を表示します。\n`/一括呼び戻し` - 登録されている全ユーザーをサーバーに一斉呼び戻しします。", inline=False)
     embed.add_field(name="💥 チャンネル管理", value="`/チャンネル再作成` - 現在のチャンネルを初期化（作り直し）します。", inline=False)
     
     await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class AutocatLinkView(discord.ui.View):
+    def __init__(self, base_url: str):
+        super().__init__(timeout=300)
+        self.add_item(discord.ui.Button(label="にゃんこ代行画面を開く", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/"))
+        self.add_item(discord.ui.Button(label="Discordログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/"))
+        self.add_item(discord.ui.Button(label="VIP管理画面ログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/admin/vip"))
+
+
+@bot.tree.command(name="にゃんこ代行", description="完全版のにゃんこ大戦争代行画面を開きます")
+async def autocat_link(interaction: discord.Interaction):
+    await ensure_deferred(interaction, ephemeral=True)
+    if AUTOCAT_APP is None:
+        await interaction.followup.send("代行機能の準備に失敗しています。Renderのログと依存関係を確認してください。", ephemeral=True)
+        return
+    base_url = (os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
+    if not base_url:
+        await interaction.followup.send("RENDER_EXTERNAL_URLまたはPUBLIC_BASE_URLが未設定です。", ephemeral=True)
+        return
+    await interaction.followup.send(
+        "完全版のにゃんこ代行画面です。ログイン後、引き継ぎコード・認証番号・各種設定を入力できます。",
+        view=AutocatLinkView(base_url),
+        ephemeral=True,
+    )
 
 @bot.tree.command(name="チャンネル再作成", description="現在のチャンネルを削除し、同じ設定の新しいチャンネルに作り直します。")
 @app_commands.checks.has_permissions(administrator=True)

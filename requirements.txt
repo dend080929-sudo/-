@@ -8,3 +8,10 @@ useragent-changer
 beautifulsoup4>=4.12,<5
 Kyasher==1.5.0
 pytz>=2024.1
+bcsfe
+Flask-Limiter
+python-dotenv
+pkce
+cryptography
+curl-cffi
+pywebpush

@@ -126,10 +126,20 @@ def issue_gmail_alias(user_id: int) -> str:
     if not gmail.endswith("@gmail.com"):
         raise ValueError("先にGmailを登録してください。")
     local = gmail[:-10]
-    alphabet = string.ascii_lowercase + string.digits
+    used_aliases = {
+        str(item.get("alias", ""))
+        for item in info.get("history", [])
+        if isinstance(item, dict)
+    }
     token = ""
-    while not token:
-        token = "".join(secrets.choice(alphabet) for _ in range(8))
+    for _ in range(10000):
+        candidate = f"{secrets.randbelow(10000):04d}"
+        alias_candidate = f"{local}+{candidate}@gmail.com"
+        if alias_candidate not in used_aliases:
+            token = candidate
+            break
+    if not token:
+        raise ValueError("このGmailでは4桁エイリアスをすべて発行済みです。")
     alias = f"{local}+{token}@gmail.com"
     history = list(info.get("history", []))
     history.append({"alias": alias, "created_at": datetime.now(timezone.utc).isoformat(), "deleted": False})
