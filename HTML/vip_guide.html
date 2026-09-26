@@ -51,11 +51,11 @@
 </head>
 <body>
 <header>
-  <a class="brand" href="/">AUTOCAT <span>JP</span></a>
+  <a class="brand" href="/autocat/">AUTOCAT <span>JP</span></a>
   <div class="spacer"></div>
   <nav class="nav" aria-label="ページメニュー">
-    <a class="btn hide-mobile" href="/">Free版へ</a>
-    {% if user and user.is_vip %}<a class="btn btn-gold" href="/vip">VIPページへ</a>{% elif user %}<a class="btn btn-gold" href="/vip/purchase">購入申請</a>{% else %}<a class="btn" href="/account/login?next=/vip/purchase">ログイン</a><a class="btn btn-gold" href="/account/register?next=/vip/purchase">アカウント作成</a>{% endif %}
+    <a class="btn hide-mobile" href="/autocat/">Free版へ</a>
+    {% if user and user.is_vip %}<a class="btn btn-gold" href="/autocat/vip">VIPページへ</a>{% elif user %}<a class="btn btn-gold" href="/autocat/vip/purchase">購入申請</a>{% else %}<a class="btn" href="/autocat/account/login?next=/vip/purchase">ログイン</a><a class="btn btn-gold" href="/autocat/account/register?next=/vip/purchase">アカウント作成</a>{% endif %}
   </nav>
 </header>
 
@@ -72,7 +72,7 @@
       </div>
       <div class="hero-actions">
         {% if user and user.is_vip %}
-        <a class="btn btn-gold" href="/vip">VIP機能を使う →</a>
+        <a class="btn btn-gold" href="/autocat/vip">VIP機能を使う →</a>
         {% else %}
         <a class="btn btn-gold" href="#plans">プランを選ぶ →</a>
         <a class="btn" href="#compare">Freeとの違いを見る</a>
@@ -90,7 +90,7 @@
         <li>VIP専用の詳細設定を解放</li>
         <li>同時作成・複製数を最大5個へ拡張</li>
       </ul>
-      {% if user and user.is_vip %}<a class="btn btn-gold" href="/vip">VIPページを開く</a>{% else %}<a class="btn btn-gold" href="#plans">期間と金額を選ぶ</a>{% endif %}
+      {% if user and user.is_vip %}<a class="btn btn-gold" href="/autocat/vip">VIPページを開く</a>{% else %}<a class="btn btn-gold" href="#plans">期間と金額を選ぶ</a>{% endif %}
     </aside>
   </div>
 
@@ -99,7 +99,7 @@
     <h2 class="section-title">期間と金額を先に確認。</h2>
     <p class="section-copy">どのプランでもVIP機能と使用回数無制限を利用できます。VIP期間は管理者が付与した時点から始まります。</p>
     <div class="pricing-grid">
-      {% for plan in plans %}<article class="price-card {{ 'recommended' if plan.recommended else '' }}">{% if plan.recommended %}<span class="recommend">おすすめ</span>{% endif %}<div class="price-days">VIP {{ plan.days }}日</div><div class="price-yen">{{ '{:,}'.format(plan.price_yen) }}円</div><p class="price-desc">回数無制限・最大5個・VIP専用の詳細設定・プリセット機能を利用できます。</p><a class="btn {{ 'btn-gold' if plan.recommended else '' }}" href="/vip/purchase?plan={{ plan.days }}">{{ plan.days }}日プランを申請</a></article>{% endfor %}
+      {% for plan in plans %}<article class="price-card {{ 'recommended' if plan.recommended else '' }}">{% if plan.recommended %}<span class="recommend">おすすめ</span>{% endif %}<div class="price-days">VIP {{ plan.days }}日</div><div class="price-yen">{{ '{:,}'.format(plan.price_yen) }}円</div><p class="price-desc">回数無制限・最大5個・VIP専用の詳細設定・プリセット機能を利用できます。</p><a class="btn {{ 'btn-gold' if plan.recommended else '' }}" href="/autocat/vip/purchase?plan={{ plan.days }}">{{ plan.days }}日プランを申請</a></article>{% endfor %}
     </div>
     {% if vip_stats.total_grants or vip_stats.active_vip %}<div class="stats-grid"><div class="stat"><strong>{{ vip_stats.active_vip }}</strong><span>現在のVIP契約数</span></div><div class="stat"><strong>{{ vip_stats.grants_30d }}</strong><span>直近30日のVIP付与</span></div><div class="stat"><strong>{{ vip_stats.total_grants }}</strong><span>累計VIP付与</span></div></div>{% endif %}
   </section>
@@ -164,7 +164,7 @@
     <h2 class="section-title">もっと自由に使うならVIP。</h2>
     <p>申請後は管理者との専用DMで確認できます。</p>
     <div class="final-actions">
-      {% if user and user.is_vip %}<a class="btn btn-gold" href="/vip">VIPページへ</a>{% else %}<a class="btn btn-gold" href="#plans">プランを選ぶ</a><a class="btn" href="/">Free版へ戻る</a>{% endif %}
+      {% if user and user.is_vip %}<a class="btn btn-gold" href="/autocat/vip">VIPページへ</a>{% else %}<a class="btn btn-gold" href="#plans">プランを選ぶ</a><a class="btn" href="/autocat/">Free版へ戻る</a>{% endif %}
     </div>
   </section>
 </main>

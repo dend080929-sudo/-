@@ -15,7 +15,7 @@
   </style>
 </head>
 <body>
-<header><a class="btn" href="/admin/panel">← 管理パネル</a><div class="brand">AUTOCAT <span>VIP ADMIN</span></div><div class="spacer"></div><button id="notify" class="btn notify" type="button">DM通知をオン</button><a class="btn hide-mobile" href="/chat/admin">チャット管理</a></header>
+<header><a class="btn" href="/autocat/admin/panel">← 管理パネル</a><div class="brand">AUTOCAT <span>VIP ADMIN</span></div><div class="spacer"></div><button id="notify" class="btn notify" type="button">DM通知をオン</button><a class="btn hide-mobile" href="/autocat/chat/admin">チャット管理</a></header>
 <main>
   <section class="metrics"><div class="metric"><span>サイトアカウント</span><strong id="metric-accounts">—</strong></div><div class="metric"><span>VIP契約中</span><strong id="metric-vip">—</strong></div><div class="metric"><span>対応待ち申請</span><strong id="metric-pending">—</strong></div><div class="metric"><span>30日間の申請→付与率</span><strong id="metric-conversion">—</strong></div></section>
   <form id="grant-form" class="grant"><label class="field"><span>対象のサイトID</span><input id="grant-id" maxlength="16" placeholder="16桁のサイトID" required></label><label class="field"><span>VIP期間</span><select id="grant-days">{% for plan in plans %}<option value="{{ plan.days }}">{{ plan.days }}日・{{ '{:,}'.format(plan.price_yen) }}円</option>{% endfor %}</select></label><label class="field"><span>購入KEY（任意）</span><input id="grant-key" maxlength="16" placeholder="申請を選ぶと自動入力"></label><div class="grant-actions"><button class="btn primary" type="submit">VIP付与・延長</button><button id="revoke-by-id" class="btn danger" type="button">VIP剥奪</button></div></form><div id="status" class="status"></div>
@@ -25,6 +25,6 @@
   </div>
 </main>
 <script>window.VIP_ADMIN_CONFIG={{ {'csrfToken':csrf_token,'selectedKey':selected_key,'vapidPublicKey':vapid_public_key,'plans':plans,'paymentGuide':payment_guide}|tojson }};</script>
-<script src="/static/vip-admin.js?v=20260901-4" defer></script>
+<script src="/autocat/static/vip-admin.js?v=20260901-4" defer></script>
 </body>
 </html>

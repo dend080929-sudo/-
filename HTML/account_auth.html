@@ -17,7 +17,7 @@
 </head>
 <body>
 <main class="shell">
-  <a class="brand" href="/">AUTOCAT <span>JP</span></a>
+  <a class="brand" href="/autocat/">AUTOCAT <span>JP</span></a>
   <section class="panel">
     <div class="eyebrow">SITE ACCOUNT</div>
     <h1>{{ 'アカウントを作成' if mode == 'register' else 'ログイン' }}</h1>
@@ -38,15 +38,15 @@
       <div id="error" class="error" role="alert"></div>
     </form>
     {% if mode == 'register' %}
-      <p class="switch">すでに持っている場合は <a href="/account/login?next={{ next_url }}">ログイン</a></p>
+      <p class="switch">すでに持っている場合は <a href="/autocat/account/login?next={{ next_url }}">ログイン</a></p>
       <p class="rule">同じブラウザでは1アカウント、同じ回線では最大3アカウントまで作成できます。回線単位の登録は1時間に3件までです。</p>
     {% else %}
-      <p class="switch">初めての場合は <a href="/account/register?next={{ next_url }}">新規作成</a></p>
+      <p class="switch">初めての場合は <a href="/autocat/account/register?next={{ next_url }}">新規作成</a></p>
     {% endif %}
   </section>
-  <a class="back" href="/">← トップへ戻る</a>
+  <a class="back" href="/autocat/">← トップへ戻る</a>
 </main>
 <script>window.ACCOUNT_AUTH_CONFIG={{ {'mode':mode,'csrfToken':csrf_token,'next':next_url}|tojson }};</script>
-<script src="/static/account-auth.js?v=20260829-1" defer></script>
+<script src="/autocat/static/account-auth.js?v=20260829-1" defer></script>
 </body>
 </html>

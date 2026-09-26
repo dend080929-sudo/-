@@ -404,7 +404,7 @@
 (function() {
   const AD_KEY  = 'nyanko_ad_last_shown';
   const AD_TTL  = 12 * 60 * 60 * 1000;
-  const VIP_GUIDE = '/vip-guide';
+  const VIP_GUIDE = '/autocat/vip-guide';
 
   function shouldShowAd() {
     try {
@@ -454,31 +454,31 @@
     <button class="btn btn-ghost" onclick="openCharSearch()">キャラ検索</button>
     <button class="btn btn-ghost" onclick="openHistory()">履歴</button>
     <button class="btn btn-ghost" onclick="openTerms()">利用規約</button>
-    <a href="/chat" class="btn btn-ghost">チャット</a>
+    <a href="/autocat/chat" class="btn btn-ghost">チャット</a>
 
     {% if discord_user %}
-    <a href="/chat" class="user-chip" style="text-decoration:none;">Discord: {{ discord_user.username }}</a>
-    {% if discord_is_admin %}<a href="/admin/panel" class="btn btn-ghost">管理</a>{% endif %}
-    <a href="/auth/logout" class="btn btn-ghost">Discordログアウト</a>
+    <a href="/autocat/chat" class="user-chip" style="text-decoration:none;">Discord: {{ discord_user.username }}</a>
+    {% if discord_is_admin %}<a href="/autocat/admin/panel" class="btn btn-ghost">管理</a>{% endif %}
+    <a href="/autocat/auth/logout" class="btn btn-ghost">Discordログアウト</a>
     {% else %}
-    <a href="/auth/login?next=/" class="btn btn-ghost">Discordログイン</a>
+    <a href="/autocat/auth/login?next=/autocat/" class="btn btn-ghost">Discordログイン</a>
     {% endif %}
 
     {% if not user or not user.is_vip %}
-    <a href="/vip-guide" class="btn btn-ghost vip-link">★ VIPを見る</a>
+    <a href="/autocat/vip-guide" class="btn btn-ghost vip-link">★ VIPを見る</a>
     {% endif %}
 
     {% if not user %}
-    <a href="/account/login" class="btn btn-ghost">サイトログイン</a>
-    <a href="/account/register" class="btn btn-ghost">アカウント作成</a>
+    <a href="/autocat/account/login" class="btn btn-ghost">サイトログイン</a>
+    <a href="/autocat/account/register" class="btn btn-ghost">アカウント作成</a>
     {% else %}
-    <a href="/account" class="user-chip" style="text-decoration:none;">
+    <a href="/autocat/account" class="user-chip" style="text-decoration:none;">
       {{ user.username }}{% if user.is_vip %} <span class="vip-badge">★VIP</span>{% endif %}
     </a>
     {% if user.is_vip %}
-    <a href="/vip" class="btn btn-ghost">VIPページへ</a>
+    <a href="/autocat/vip" class="btn btn-ghost">VIPページへ</a>
     {% endif %}
-    <a href="/account/logout" class="btn btn-ghost">サイトログアウト</a>
+    <a href="/autocat/account/logout" class="btn btn-ghost">サイトログアウト</a>
     {% endif %}
   </div>
 </header>
@@ -576,7 +576,7 @@
   <section id="month-end-account-nudge" class="month-end-nudge" hidden>
     <strong>今日はFree無制限デー</strong>
     <p>無料のサイトアカウントを作成してログインすると、本日中は残り回数を気にせず利用できます。</p>
-    <div class="month-end-actions"><a class="btn btn-primary" href="/account/register?next=/">無料で作成</a><a class="btn btn-ghost" href="/account/login?next=/">ログイン</a></div>
+    <div class="month-end-actions"><a class="btn btn-primary" href="/autocat/account/register?next=/autocat/">無料で作成</a><a class="btn btn-ghost" href="/autocat/account/login?next=/autocat/">ログイン</a></div>
   </section>
   {% endif %}
   <section class="vip-promo" aria-label="VIP版の案内">
@@ -590,7 +590,7 @@
         <span class="vip-promo-point">詳細指定を解放</span>
       </div>
     </div>
-    <a href="/vip-guide" class="btn btn-primary vip-link vip-promo-action">Freeとの違いを見る →</a>
+    <a href="/autocat/vip-guide" class="btn btn-primary vip-link vip-promo-action">Freeとの違いを見る →</a>
   </section>
   {% if user and not user.is_vip and user.trial_offer_active %}
   <section id="trial-promo" class="trial-promo" data-expires="{{ user.trial_offer_expires_at }}">
@@ -857,8 +857,8 @@ function loadFreePresetIntoCurrentTab(){
 }
 
 function appendVipLockedCard(container){
-  const card=document.createElement('div');card.className='card vip-locked-card';card.innerHTML=`<div class="card-title" style="color:#fde047">VIP限定機能（Freeでは選択できません）</div><div class="vip-locked-grid">${VIP_LOCKED_FEATURES.map(label=>`<div class="vip-locked-option" role="link" tabindex="0"><span class="vip-lock">鍵</span><span>${label}</span></div>`).join('')}</div><div class="vip-locked-note"><span>VIPにすると、ここに表示されている機能を実際に設定できます。</span><a class="btn btn-ghost vip-link" href="/vip-guide">VIPとの違いを見る</a></div>`;
-  card.querySelectorAll('.vip-locked-option').forEach(item=>{const open=()=>location.assign('/vip-guide#compare');item.addEventListener('click',open);item.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();open();}});});container.appendChild(card);
+  const card=document.createElement('div');card.className='card vip-locked-card';card.innerHTML=`<div class="card-title" style="color:#fde047">VIP限定機能（Freeでは選択できません）</div><div class="vip-locked-grid">${VIP_LOCKED_FEATURES.map(label=>`<div class="vip-locked-option" role="link" tabindex="0"><span class="vip-lock">鍵</span><span>${label}</span></div>`).join('')}</div><div class="vip-locked-note"><span>VIPにすると、ここに表示されている機能を実際に設定できます。</span><a class="btn btn-ghost vip-link" href="/autocat/vip-guide">VIPとの違いを見る</a></div>`;
+  card.querySelectorAll('.vip-locked-option').forEach(item=>{const open=()=>location.assign('/autocat/vip-guide#compare');item.addEventListener('click',open);item.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();open();}});});container.appendChild(card);
 }
 
 function updateStickyRunButton() {
@@ -884,7 +884,7 @@ function escChar(value) {
 async function ensureCharacterMetadata() {
   if (characterMetadata) return characterMetadata;
   if (!characterMetadataPromise) {
-    characterMetadataPromise = fetch('/api/character_metadata').then(async r => {
+    characterMetadataPromise = fetch('/autocat/api/character_metadata').then(async r => {
       if (!r.ok) throw new Error('character metadata');
       const data = await r.json();
       characterMetadata = data.characters || [];
@@ -1382,7 +1382,7 @@ function applyFreeStatus(data, {notify=true}={}) {
   applyQuotaButtonState();
   if (data.trial?.claimed && Number(data.trial?.uses_remaining)>0) {
     const seen=sessionStorage.getItem('autocat_trial_vip_seen_v2');
-    if(!seen){sessionStorage.setItem('autocat_trial_vip_seen_v2','1');showTopNotice('招待成立によりVIP版を1回無料で実行できます。VIPページへ移動します！');setTimeout(()=>location.assign('/vip'),1200);}
+    if(!seen){sessionStorage.setItem('autocat_trial_vip_seen_v2','1');showTopNotice('招待成立によりVIP版を1回無料で実行できます。VIPページへ移動します！');setTimeout(()=>location.assign('/autocat/vip'),1200);}
   } else if (data.trial && !data.trial.offer_active) {
     const trial=document.getElementById('trial-promo');if(trial)trial.hidden=true;
   }
@@ -1409,7 +1409,7 @@ function updateTrialCountdown(){const promo=document.getElementById('trial-promo
 async function fetchFreeStatus(options={}) {
   try {
     const fingerprint=await getBrowserFingerprint();
-    const res=await fetchWithTimeout('/api/free/status',{
+    const res=await fetchWithTimeout('/autocat/api/free/status',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({fingerprint}),
     },15000);
@@ -1435,7 +1435,7 @@ async function loadInvitationLink() {
   if (copyButton) copyButton.disabled=true;
   try {
     const fingerprint=await getBrowserFingerprint();
-    const res=await fetchWithTimeout('/api/free/invitation',{
+    const res=await fetchWithTimeout('/autocat/api/free/invitation',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({fingerprint}),
     },15000);
@@ -1487,7 +1487,7 @@ async function redeemInvitationFromUrl() {
   }
   try {
     const fingerprint=await getBrowserFingerprint();
-    const res=await fetchWithTimeout('/api/free/invitation/redeem',{
+    const res=await fetchWithTimeout('/autocat/api/free/invitation/redeem',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({code,fingerprint}),
     },15000);
@@ -1528,12 +1528,12 @@ async function submitDaiko() {
   btn.disabled = true; btn.textContent = '認証中...';
   try {
     const fingerprint = await getBrowserFingerprint();
-    const keyRes = await fetchWithTimeout('/api/get_key', { method: 'POST' }, 15000);
+    const keyRes = await fetchWithTimeout('/autocat/api/get_key', { method: 'POST' }, 15000);
     if (!keyRes.ok) throw new Error('認証キーを取得できませんでした');
     const { api_key } = await keyRes.json();
     const operation_id = generateOperationId();
     const payload = { ...collectPayload('daiko'), transfer_code: tc, auth_code: ac, api_key, operation_id, fingerprint };
-    await startJob('daiko', '/api/run_daiko', payload, { in_tc: tc, in_ac: ac, operation_id });
+    await startJob('daiko', '/autocat/api/run_daiko', payload, { in_tc: tc, in_ac: ac, operation_id });
   } catch (e) {
     delete btn.dataset.running;
     btn.textContent = '代行を実行する'; applyQuotaButtonState();
@@ -1550,12 +1550,12 @@ async function submitCreate() {
   btn.disabled = true; btn.textContent = '認証中...';
   try {
     const fingerprint = await getBrowserFingerprint();
-    const keyRes = await fetchWithTimeout('/api/get_key', { method: 'POST' }, 15000);
+    const keyRes = await fetchWithTimeout('/autocat/api/get_key', { method: 'POST' }, 15000);
     if (!keyRes.ok) throw new Error('認証キーを取得できませんでした');
     const { api_key } = await keyRes.json();
     const count = countState.create;
     const payload = { ...collectPayload('create'), count, api_key, fingerprint };
-    await startJob('create', '/api/run_create', payload);
+    await startJob('create', '/autocat/api/run_create', payload);
   } catch (e) {
     delete btn.dataset.running;
     btn.textContent = 'アカウントを作成する'; applyQuotaButtonState();
@@ -1574,12 +1574,12 @@ async function submitClone() {
   btn.disabled = true; btn.textContent = '認証中...';
   try {
     const fingerprint = await getBrowserFingerprint();
-    const keyRes = await fetchWithTimeout('/api/get_key', { method: 'POST' }, 15000);
+    const keyRes = await fetchWithTimeout('/autocat/api/get_key', { method: 'POST' }, 15000);
     if (!keyRes.ok) throw new Error('認証キーを取得できませんでした');
     const { api_key } = await keyRes.json();
     const count = countState.clone;
     const operation_id = generateOperationId();
-    await startJob('clone', '/api/run_clone', { transfer_code: tc, auth_code: ac, count, api_key, operation_id, fingerprint }, { in_tc: tc, in_ac: ac, operation_id });
+    await startJob('clone', '/autocat/api/run_clone', { transfer_code: tc, auth_code: ac, count, api_key, operation_id, fingerprint }, { in_tc: tc, in_ac: ac, operation_id });
   } catch (e) {
     delete btn.dataset.running;
     btn.textContent = '複製を実行する'; applyQuotaButtonState();
@@ -1831,7 +1831,7 @@ async function loadCharDict() {
   const status = document.getElementById('charsearch-status');
   status.textContent = 'データを取得中...';
   try {
-    const res = await fetch('/api/char_dict');
+    const res = await fetch('/autocat/api/char_dict');
     if (!res.ok) throw new Error('fetch failed');
     charDict = await res.json();
     status.textContent = `${Object.keys(charDict).length} キャラクター読み込み済み`;
@@ -2036,7 +2036,7 @@ setInterval(()=>fetchFreeStatus({notify:true}),15000);
 // ── 使用回数のリアルタイム表示 ──
 async function fetchUsageCount() {
   try {
-    const res = await fetch('/api/usage_count');
+    const res = await fetch('/autocat/api/usage_count');
     if (!res.ok) return;
     const { count } = await res.json();
     const el = document.getElementById('usage-count-num');

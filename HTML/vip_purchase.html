@@ -23,7 +23,7 @@
 </head>
 <body>
 <div class="app">
-  <header><a class="btn" href="/account">← 戻る</a><button id="history-toggle" class="btn history-toggle" type="button">履歴</button><div class="brand">AUTOCAT <span>VIP購入</span></div><div class="spacer"></div><a class="btn hide-mobile" href="/vip-guide">VIP案内</a><button id="notify" class="btn notify" type="button">通知をオン</button></header>
+  <header><a class="btn" href="/autocat/account">← 戻る</a><button id="history-toggle" class="btn history-toggle" type="button">履歴</button><div class="brand">AUTOCAT <span>VIP購入</span></div><div class="spacer"></div><a class="btn hide-mobile" href="/autocat/vip-guide">VIP案内</a><button id="notify" class="btn notify" type="button">通知をオン</button></header>
   <div class="layout">
     <aside id="sidebar" class="sidebar"><div class="account"><strong>{{ account.username }}</strong><div class="account-id">{{ account.public_id }}</div><small>{{ 'VIP契約中' if account.is_vip else 'Free' }}</small></div><div class="side-title">購入申請・履歴</div><div id="ticket-list"></div><button id="new-request" class="btn gold new" type="button">新しく購入申請</button></aside>
     <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
@@ -41,6 +41,6 @@
 <div id="confirm" class="confirm {{ 'show' if not tickets else '' }}"><section class="confirm-card"><div class="confirm-mark">★</div><h2>VIPプランを選択</h2><p>期間と金額を確認してから購入申請を送信します。VIPは管理者が付与した時点から開始します。</p><div class="plans">{% for plan in plans %}<label class="plan"><input type="radio" name="vip-plan" value="{{ plan.days }}" {{ 'checked' if plan.days == selected_plan.days else '' }}>{% if plan.recommended %}<span class="recommend">おすすめ</span>{% endif %}<div class="plan-days">{{ plan.days }}日</div><div class="plan-price">{{ '{:,}'.format(plan.price_yen) }}円</div><div class="plan-note">回数無制限・VIP機能</div></label>{% endfor %}</div><div class="confirm-info"><div>サイトアカウント<b>{{ account.public_id }}</b></div><div class="total">合計金額<b id="confirm-total">{{ '{:,}'.format(selected_plan.price_yen) }}円</b></div></div><div class="confirm-actions"><button id="cancel-confirm" class="btn" type="button">戻る</button><button id="confirm-request" class="btn gold" type="button">この内容で購入申請</button></div><div id="confirm-error" class="error"></div></section></div>
 <div id="toast" class="toast"></div>
 <script>window.VIP_PURCHASE_CONFIG={{ {'csrfToken':csrf_token,'selectedKey':selected_key,'selectedPlan':selected_plan.days,'plans':plans,'vapidPublicKey':vapid_public_key}|tojson }};</script>
-<script src="/static/vip-purchase.js?v=20260901-2" defer></script>
+<script src="/autocat/static/vip-purchase.js?v=20260901-2" defer></script>
 </body>
 </html>

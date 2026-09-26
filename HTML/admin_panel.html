@@ -21,9 +21,9 @@
 <body>
 <main>
   <section class="card">
-    <div class="head"><h1>管理パネル</h1><div class="spacer"></div><a class="link" href="/admin/vip">VIP管理を開く</a><a class="link" href="/chat/admin">チャット管理</a></div>
+    <div class="head"><h1>管理パネル</h1><div class="spacer"></div><a class="link" href="/autocat/admin/vip">VIP管理を開く</a><a class="link" href="/autocat/chat/admin">チャット管理</a></div>
     <p>IDを入力してください。</p>
-    <form action="/admin/panel" method="get">
+    <form action="/autocat/admin/panel" method="get">
       <input name="id" value="{{ operation_id }}" maxlength="30" pattern="[A-Za-z0-9]{30}" autocomplete="off" placeholder="ID" required>
       <button type="submit">検索</button>
     </form>
@@ -31,7 +31,7 @@
   </section>
 
   <section class="card">
-    <div class="head"><h2>VIP契約</h2><div class="spacer"></div><a class="link" href="/admin/vip">申請DM・付与管理 →</a></div>
+    <div class="head"><h2>VIP契約</h2><div class="spacer"></div><a class="link" href="/autocat/admin/vip">申請DM・付与管理 →</a></div>
     <div class="summary"><div><span>サイトアカウント</span><strong>{{ vip_overview.summary.accounts }}</strong></div><div><span>VIP契約中</span><strong>{{ vip_overview.summary.active_vip }}</strong></div><div><span>対応待ち申請</span><strong>{{ vip_overview.summary.pending }}</strong></div></div>
     <div class="vip-list">
       {% for subscriber in vip_overview.subscribers[:10] %}

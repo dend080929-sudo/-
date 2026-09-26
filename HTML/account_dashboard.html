@@ -15,10 +15,10 @@
   </style>
 </head>
 <body>
-<header><a class="brand" href="/">AUTOCAT <span>JP</span></a><div class="spacer"></div><a class="btn hide-mobile" href="/chat">チャット</a><a class="btn" href="/account/logout">ログアウト</a></header>
+<header><a class="brand" href="/autocat/">AUTOCAT <span>JP</span></a><div class="spacer"></div><a class="btn hide-mobile" href="/autocat/chat">チャット</a><a class="btn" href="/autocat/account/logout">ログアウト</a></header>
 <main>
-  <div class="welcome"><div><h1>{{ account.username }}</h1><p>サイトアカウントとVIP契約の管理</p></div><div class="spacer"></div>{% if account.is_vip %}<a class="btn primary" href="/vip">VIPページを開く</a>{% else %}<a class="btn primary" href="/vip-guide#plans">VIPプランを選ぶ</a>{% endif %}</div>
-  {% if not account.is_vip and account.trial_offer_active %}<section id="trial" class="card trial" data-expires="{{ account.trial_offer_expires_at }}"><div><strong>招待1人成立でVIPを1回無料</strong><p>登録後1時間以内限定です。VIP処理が失敗した場合は回数を消費しません。</p></div><span id="trial-time" class="trial-time">--:--</span><a class="btn primary" href="/?trial_invite=1">招待リンクを発行</a></section>{% endif %}
+  <div class="welcome"><div><h1>{{ account.username }}</h1><p>サイトアカウントとVIP契約の管理</p></div><div class="spacer"></div>{% if account.is_vip %}<a class="btn primary" href="/autocat/vip">VIPページを開く</a>{% else %}<a class="btn primary" href="/autocat/vip-guide#plans">VIPプランを選ぶ</a>{% endif %}</div>
+  {% if not account.is_vip and account.trial_offer_active %}<section id="trial" class="card trial" data-expires="{{ account.trial_offer_expires_at }}"><div><strong>招待1人成立でVIPを1回無料</strong><p>登録後1時間以内限定です。VIP処理が失敗した場合は回数を消費しません。</p></div><span id="trial-time" class="trial-time">--:--</span><a class="btn primary" href="/autocat/?trial_invite=1">招待リンクを発行</a></section>{% endif %}
   <div class="grid">
     <section class="card">
       <h2>サイトアカウントID</h2>
@@ -28,12 +28,12 @@
     <section class="card">
       <h2>VIP契約</h2>
       <div class="vip"><div class="vip-mark">★</div><div><strong>{% if account.is_paid_vip %}VIP 契約中{% elif account.is_trial_vip %}VIP 無料体験{% else %}Free{% endif %}</strong><span>{% if account.is_paid_vip and account.vip_expires_at %}有効期限: <b data-time="{{ account.vip_expires_at }}"></b>{% elif account.is_paid_vip %}有効期限なし{% elif account.is_trial_vip %}VIP版の実行 残り{{ account.trial_vip_uses_remaining }}回{% else %}現在VIP契約はありません{% endif %}</span></div></div>
-      <div class="actions">{% if account.is_vip %}<a class="btn primary" href="/vip">VIPを使う</a><a class="btn" href="/vip-guide#plans">VIPを延長</a>{% endif %}<a class="btn" href="/vip/purchase">購入DM・申請履歴</a></div>
+      <div class="actions">{% if account.is_vip %}<a class="btn primary" href="/autocat/vip">VIPを使う</a><a class="btn" href="/autocat/vip-guide#plans">VIPを延長</a>{% endif %}<a class="btn" href="/autocat/vip/purchase">購入DM・申請履歴</a></div>
     </section>
   </div>
   <section class="card tickets">
     <h2>VIP購入申請</h2>
-    {% if tickets %}{% for ticket in tickets %}<a class="ticket" href="/vip/purchase?key={{ ticket.purchase_key }}"><div><div class="key">{{ ticket.purchase_key }}</div><div class="small">VIP {{ ticket.requested_days }}日・{{ '{:,}'.format(ticket.price_yen) }}円　<span data-time="{{ ticket.updated_at }}"></span>{% if ticket.chat_closed %}　DM終了{% endif %}</div></div><span class="status" data-status="{{ ticket.status }}">{{ ticket.status }}</span></a>{% endfor %}{% else %}<div class="empty">購入申請はまだありません。</div>{% endif %}
+    {% if tickets %}{% for ticket in tickets %}<a class="ticket" href="/autocat/vip/purchase?key={{ ticket.purchase_key }}"><div><div class="key">{{ ticket.purchase_key }}</div><div class="small">VIP {{ ticket.requested_days }}日・{{ '{:,}'.format(ticket.price_yen) }}円　<span data-time="{{ ticket.updated_at }}"></span>{% if ticket.chat_closed %}　DM終了{% endif %}</div></div><span class="status" data-status="{{ ticket.status }}">{{ ticket.status }}</span></a>{% endfor %}{% else %}<div class="empty">購入申請はまだありません。</div>{% endif %}
   </section>
 </main>
 <script>

@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>AUTOCAT JP Chat</title>
   <style>
-    @font-face{font-family:Kogoe;src:url('/static/fonts/Kogoe-Light.ttf') format('truetype');font-display:swap}
+    @font-face{font-family:Kogoe;src:url('/autocat/static/fonts/Kogoe-Light.ttf') format('truetype');font-display:swap}
     :root{--bg:#090b11;--surface:#11151f;--surface2:#171c28;--line:#263044;--text:#edf4ff;--muted:#8d9bb0;--blue:#38bdf8;--blue2:#7dd3fc;--red:#fb7185;--green:#4ade80;--shadow:0 20px 55px rgba(0,0,0,.4)}
     *{box-sizing:border-box}html,body{height:100%}body{margin:0;background:radial-gradient(circle at 20% 0,rgba(56,189,248,.1),transparent 32%),var(--bg);color:var(--text);font-family:Kogoe,system-ui,sans-serif;overflow:hidden}
     button,input,textarea{font:inherit}.app{height:100%;display:grid;grid-template-rows:auto auto 1fr auto;max-width:980px;margin:auto;background:rgba(9,11,17,.66);border-inline:1px solid rgba(38,48,68,.65)}
@@ -23,15 +23,15 @@
 <body>
 <div class="app">
   <header>
-    <a class="btn" href="{{ '/vip' if user and user.is_vip else '/' }}">← 戻る</a>
+    <a class="btn" href="{{ '/autocat/vip' if user and user.is_vip else '/autocat/' }}">← 戻る</a>
     <div class="brand">AUTOCAT <span>JP CHAT</span></div>
     <div class="spacer"></div>
     <div id="identity" class="identity">接続中...</div>
-    {% if is_chat_admin %}<a class="btn" href="/chat/admin">管理</a>{% endif %}
+    {% if is_chat_admin %}<a class="btn" href="/autocat/chat/admin">管理</a>{% endif %}
     {% if user %}
-      <a class="btn" href="/auth/logout?next=/chat">Discordログアウト</a>
+      <a class="btn" href="/autocat/auth/logout?next=/chat">Discordログアウト</a>
     {% else %}
-      <a class="btn" href="/auth/login?next=/chat">Discordログイン</a>
+      <a class="btn" href="/autocat/auth/login?next=/chat">Discordログイン</a>
     {% endif %}
   </header>
 
@@ -77,6 +77,6 @@ window.CHAT_CONFIG={{ {
   'discordLoggedIn': user is not none
 }|tojson }};
 </script>
-<script src="/chat-assets/chat.js?v=20260829-1" defer></script>
+<script src="/autocat/chat-assets/chat.js?v=20260829-1" defer></script>
 </body>
 </html>

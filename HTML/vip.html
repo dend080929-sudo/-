@@ -528,23 +528,23 @@
     <button class="btn btn-ghost" onclick="openCharSearch()">キャラ検索</button>
     <button class="btn btn-ghost" onclick="openHistory()">履歴</button>
     <button class="btn btn-ghost" onclick="openTerms()">利用規約</button>
-    <a href="/chat" class="btn btn-ghost">チャット</a>
+    <a href="/autocat/chat" class="btn btn-ghost">チャット</a>
 
     {% if discord_user %}
-    <a href="/chat" class="user-chip" style="text-decoration:none;">Discord: {{ discord_user.username }}</a>
-    {% if discord_is_admin %}<a href="/admin/panel" class="btn btn-ghost">管理</a>{% endif %}
-    <a href="/auth/logout" class="btn btn-ghost">Discordログアウト</a>
+    <a href="/autocat/chat" class="user-chip" style="text-decoration:none;">Discord: {{ discord_user.username }}</a>
+    {% if discord_is_admin %}<a href="/autocat/admin/panel" class="btn btn-ghost">管理</a>{% endif %}
+    <a href="/autocat/auth/logout" class="btn btn-ghost">Discordログアウト</a>
     {% else %}
-    <a href="/auth/login?next=/" class="btn btn-ghost">Discordログイン</a>
+    <a href="/autocat/auth/login?next=/autocat/" class="btn btn-ghost">Discordログイン</a>
     {% endif %}
 
     {% if not user %}
-    <a href="/account/login" class="btn btn-ghost">サイトログイン</a>
+    <a href="/autocat/account/login" class="btn btn-ghost">サイトログイン</a>
     {% else %}
-    <a href="/account" class="user-chip" style="text-decoration:none;">
+    <a href="/autocat/account" class="user-chip" style="text-decoration:none;">
       {{ user.username }}{% if user.is_vip %} <span class="vip-badge">★VIP</span>{% endif %}
     </a>
-    <a href="/account/logout" class="btn btn-ghost">サイトログアウト</a>
+    <a href="/autocat/account/logout" class="btn btn-ghost">サイトログアウト</a>
     {% endif %}
   </div>
 </header>
@@ -901,7 +901,7 @@ const futureScoreState = { daiko:newFutureScoreState(), create:newFutureScoreSta
 function newLineupEditorState(){return {lineup:1,cats:Array(10).fill(1),forms:Array(10).fill(1),form:1,rarity:'all',selected:new Set([0]),query:''};}
 const lineupEditorState={daiko:newLineupEditorState(),create:newLineupEditorState()};
 function escChar(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-async function ensureCharacterMetadata(){if(characterMetadata)return characterMetadata;if(!characterMetadataPromise){characterMetadataPromise=fetch('/api/character_metadata').then(async r=>{if(!r.ok)throw new Error('character metadata');const data=await r.json();characterMetadata=data.characters||[];characterGroups=Array.isArray(data.groups)?data.groups:[];return characterMetadata;}).finally(()=>{characterMetadataPromise=null;});}return characterMetadataPromise;}
+async function ensureCharacterMetadata(){if(characterMetadata)return characterMetadata;if(!characterMetadataPromise){characterMetadataPromise=fetch('/autocat/api/character_metadata').then(async r=>{if(!r.ok)throw new Error('character metadata');const data=await r.json();characterMetadata=data.characters||[];characterGroups=Array.isArray(data.groups)?data.groups:[];return characterMetadata;}).finally(()=>{characterMetadataPromise=null;});}return characterMetadataPromise;}
 function supportsCharacterForm(cat,form){const n=Number(form);return !!cat&&cat.selectable!==false&&Number.isInteger(n)&&n>=1&&n<=Number(cat.form_count||1)&&!!cat.names?.[n-1];}
 function makeCharacterItem(tab,cat,old={},requestedForm=null){const bulk=characterBulkLevels[tab],talents=cat.talents||[],candidate=requestedForm??old.form??characterFormFilter[tab],form=Math.max(1,Math.min(Number(cat.form_count||1),Number(candidate)||1));return {...old,id:cat.id,form,names:cat.names,rarity:cat.rarity,rarity_name:cat.rarity_name,base_level:old.base_level??bulk.base_level,plus_level:old.plus_level??bulk.plus_level,talent_defs:talents,talent_open:old.talent_open||false,talent_action:old.talent_action||'set',talent_mode:old.talent_mode||'same',talent_bulk_level:old.talent_bulk_level??null,talent_selected:old.talent_selected||talents.map(t=>t.id),talent_levels:old.talent_levels||Object.fromEntries(talents.map(t=>[t.id,t.max_level]))};}
 function enrichSelectedCharacters(tab){if(!characterMetadata)return;characterSelectionState[tab].forEach((old,id)=>{const cat=characterMetadata.find(c=>c.id===id);if(cat)characterSelectionState[tab].set(id,makeCharacterItem(tab,cat,old,old.form));else characterSelectionState[tab].delete(id);});}
@@ -995,7 +995,7 @@ function renderSelectedCharacters(tab){
 async function ensureOtotoMetadata(){
   if(ototoMetadata)return ototoMetadata;
   if(!ototoMetadataPromise){
-    ototoMetadataPromise=fetch('/api/vip_ototo_metadata').then(async response=>{
+    ototoMetadataPromise=fetch('/autocat/api/vip_ototo_metadata').then(async response=>{
       if(!response.ok)throw new Error('ototo metadata');
       const data=await response.json(); ototoMetadata=Array.isArray(data.cannons)?data.cannons:[]; return ototoMetadata;
     }).finally(()=>{ototoMetadataPromise=null;});
@@ -1681,7 +1681,7 @@ function resetSpecialStageSelections(tab) {
 async function loadLegendMetadata() {
   if (legendMetadata) return legendMetadata;
   if (!legendMetadataPromise) {
-    legendMetadataPromise = fetch('/api/vip_legend_metadata')
+    legendMetadataPromise = fetch('/autocat/api/vip_legend_metadata')
       .then(async response => {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || 'ステージ名を読み込めませんでした');
@@ -3319,12 +3319,12 @@ async function submitDaiko() {
   const btn = document.getElementById('btn-daiko');
   btn.disabled = true; btn.textContent = '認証中...';
   try {
-    const keyRes = await fetchWithTimeout('/api/get_key', { method: 'POST' }, 15000);
+    const keyRes = await fetchWithTimeout('/autocat/api/get_key', { method: 'POST' }, 15000);
     if (!keyRes.ok) throw new Error('認証キーを取得できませんでした');
     const { api_key } = await keyRes.json();
     const operation_id = generateOperationId();
     const payload = { ...collectPayload('daiko'), transfer_code: tc, auth_code: ac, api_key, operation_id };
-    await startJob('daiko', '/api/run_daiko', payload, { in_tc: tc, in_ac: ac, operation_id });
+    await startJob('daiko', '/autocat/api/run_daiko', payload, { in_tc: tc, in_ac: ac, operation_id });
   } catch (e) {
     btn.disabled = false; btn.textContent = '代行を実行する';
     alert('エラーが発生しました');
@@ -3337,13 +3337,13 @@ async function submitCreate() {
   const btn = document.getElementById('btn-create');
   btn.disabled = true; btn.textContent = '認証中...';
   try {
-    const keyRes = await fetchWithTimeout('/api/get_key', { method: 'POST' }, 15000);
+    const keyRes = await fetchWithTimeout('/autocat/api/get_key', { method: 'POST' }, 15000);
     if (!keyRes.ok) throw new Error('認証キーを取得できませんでした');
     const { api_key } = await keyRes.json();
     const count = countState.create;
     const account_type = accountTypeState.create;
     const payload = { ...collectPayload('create'), count, account_type, api_key };
-    await startJob('create', '/api/run_create', payload);
+    await startJob('create', '/autocat/api/run_create', payload);
   } catch (e) {
     btn.disabled = false; btn.textContent = 'アカウントを作成する';
     alert('エラーが発生しました');
@@ -3358,12 +3358,12 @@ async function submitClone() {
   const btn = document.getElementById('btn-clone');
   btn.disabled = true; btn.textContent = '認証中...';
   try {
-    const keyRes = await fetchWithTimeout('/api/get_key', { method: 'POST' }, 15000);
+    const keyRes = await fetchWithTimeout('/autocat/api/get_key', { method: 'POST' }, 15000);
     if (!keyRes.ok) throw new Error('認証キーを取得できませんでした');
     const { api_key } = await keyRes.json();
     const count = countState.clone;
     const operation_id = generateOperationId();
-    await startJob('clone', '/api/run_clone', { transfer_code: tc, auth_code: ac, count, api_key, operation_id }, { in_tc: tc, in_ac: ac, operation_id });
+    await startJob('clone', '/autocat/api/run_clone', { transfer_code: tc, auth_code: ac, count, api_key, operation_id }, { in_tc: tc, in_ac: ac, operation_id });
   } catch (e) {
     btn.disabled = false; btn.textContent = '複製を実行する';
     alert('エラーが発生しました');
@@ -3606,7 +3606,7 @@ async function loadCharDict() {
   const status = document.getElementById('charsearch-status');
   status.textContent = 'データを取得中...';
   try {
-    const res = await fetch('/api/char_dict');
+    const res = await fetch('/autocat/api/char_dict');
     if (!res.ok) throw new Error('fetch failed');
     charDict = await res.json();
     status.textContent = `${Object.keys(charDict).length} キャラクター読み込み済み`;
@@ -3824,7 +3824,7 @@ loadLegendMetadata().then(() => {
 // ── 使用回数のリアルタイム表示 ──
 async function fetchUsageCount() {
   try {
-    const res = await fetch('/api/usage_count');
+    const res = await fetch('/autocat/api/usage_count');
     if (!res.ok) return;
     const { count } = await res.json();
     const el = document.getElementById('usage-count-num');
