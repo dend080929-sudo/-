@@ -70,7 +70,7 @@ const message=document.getElementById('message');
 const expires=document.getElementById('expires');
 if(expires) expires.textContent=new Date(Number(expires.dataset.time)*1000).toLocaleString('ja-JP');
 async function refresh(){
-  const res=await fetch(`/api/admin/operations/${operationId}`,{cache:'no-store'});
+  const res=await fetch(`/autocat/api/admin/operations/${operationId}`,{cache:'no-store'});
   if(!res.ok)return;
   const data=await res.json();
   document.getElementById('status').textContent=data.status||'';
@@ -89,7 +89,7 @@ async function refresh(){
 button?.addEventListener('click',async()=>{
   if(!confirm('保存済みデータから新しい引き継ぎコードを発行しますか？'))return;
   button.disabled=true; message.textContent='再発行を開始します...'; message.className='';
-  const res=await fetch(`/api/admin/operations/${operationId}/reissue`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:'{}'});
+  const res=await fetch(`/autocat/api/admin/operations/${operationId}/reissue`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:'{}'});
   const data=await res.json().catch(()=>({}));
   if(!res.ok){message.textContent=data.error||'再発行を開始できませんでした。';message.className='error';return;}
   setTimeout(refresh,1000);

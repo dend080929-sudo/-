@@ -29,9 +29,9 @@
     <div id="identity" class="identity">接続中...</div>
     {% if is_chat_admin %}<a class="btn" href="/autocat/chat/admin">管理</a>{% endif %}
     {% if user %}
-      <a class="btn" href="/autocat/auth/logout?next=/chat">Discordログアウト</a>
+      <a class="btn" href="/autocat/auth/logout?next=/autocat/chat">Discordログアウト</a>
     {% else %}
-      <a class="btn" href="/autocat/auth/login?next=/chat">Discordログイン</a>
+      <a class="btn" href="/autocat/auth/login?next=/autocat/chat">Discordログイン</a>
     {% endif %}
   </header>
 

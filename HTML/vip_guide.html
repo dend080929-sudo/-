@@ -55,7 +55,7 @@
   <div class="spacer"></div>
   <nav class="nav" aria-label="ページメニュー">
     <a class="btn hide-mobile" href="/autocat/">Free版へ</a>
-    {% if user and user.is_vip %}<a class="btn btn-gold" href="/autocat/vip">VIPページへ</a>{% elif user %}<a class="btn btn-gold" href="/autocat/vip/purchase">購入申請</a>{% else %}<a class="btn" href="/autocat/account/login?next=/vip/purchase">ログイン</a><a class="btn btn-gold" href="/autocat/account/register?next=/vip/purchase">アカウント作成</a>{% endif %}
+    {% if user and user.is_vip %}<a class="btn btn-gold" href="/autocat/vip">VIPページへ</a>{% elif user %}<a class="btn btn-gold" href="/autocat/vip/purchase">購入申請</a>{% else %}<a class="btn" href="/autocat/account/login?next=/autocat/vip/purchase">ログイン</a><a class="btn btn-gold" href="/autocat/account/register?next=/autocat/vip/purchase">アカウント作成</a>{% endif %}
   </nav>
 </header>
 

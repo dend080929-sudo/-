@@ -3439,7 +3439,7 @@ async function startJob(tab, url, payload, extra = {}, resumeJobId = null, resum
     let job;
     try {
       const headers = jobToken ? {'X-Job-Token': jobToken} : {};
-      const r = await fetchWithTimeout(`/api/job/${job_id}`, {headers}, 12000);
+      const r = await fetchWithTimeout(`/autocat/api/job/${job_id}`, {headers}, 12000);
       if (!r.ok) {
         if (r.status === 403 || r.status === 404) {
           localStorage.removeItem(`${ACTIVE_JOB_KEY_PREFIX}${tab}`);
