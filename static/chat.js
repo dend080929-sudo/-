@@ -174,7 +174,7 @@ async function sendMessage(event){
 
 async function deleteMessage(id){
   if(!confirm('このメッセージを削除しますか？'))return;
-  const url=state.room==='dm'?`/api/chat/dm/messages/${Number(id)}`:`/api/chat/messages/${Number(id)}`;
+  const url=state.room==='dm'?`/autocat/api/chat/dm/messages/${Number(id)}`:`/autocat/api/chat/messages/${Number(id)}`;
   try{await api(url,{method:'DELETE',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint})});await loadState(true);}
   catch(error){showToast(error.message,'error');}
 }
@@ -183,7 +183,7 @@ async function moderate(id,action,durationSeconds=null){
   const label=action==='ban'?'BAN':action==='unban'?'制限解除':'タイムアウト';
   if(!confirm(`この利用者を${label}しますか？`))return;
   try{
-    await api(`/api/chat/messages/${Number(id)}/moderation`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint,action,duration_seconds:durationSeconds})});
+    await api(`/autocat/api/chat/messages/${Number(id)}/moderation`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({fingerprint:state.fingerprint,action,duration_seconds:durationSeconds})});
     showToast(`${label}しました。`);await loadState(true);
   }catch(error){showToast(error.message,'error');}
 }
@@ -199,7 +199,7 @@ function timeoutUser(id){
 
 function openDM(token){
   state.room='dm';state.dmTarget=String(token||'');state.dmTargetInfo=null;
-  history.replaceState(null,'',`/chat?room=dm&target=${encodeURIComponent(state.dmTarget)}`);
+  history.replaceState(null,'',`/autocat/chat?room=dm&target=${encodeURIComponent(state.dmTarget)}`);
   updateRoomPermissions();messagesEl.innerHTML='<div class="empty">DMを読み込み中...</div>';loadState();
 }
 
@@ -230,7 +230,7 @@ function setupNotifications(){
 
 document.querySelectorAll('.tab').forEach(tab=>tab.addEventListener('click',async()=>{
   state.room=tab.dataset.room;if(state.room!=='dm'){state.dmTarget='';state.dmTargetInfo=null;}
-  history.replaceState(null,'',`/chat?room=${state.room}`);updateRoomPermissions();messagesEl.innerHTML='<div class="empty">読み込み中...</div>';await loadState();
+  history.replaceState(null,'',`/autocat/chat?room=${state.room}`);updateRoomPermissions();messagesEl.innerHTML='<div class="empty">読み込み中...</div>';await loadState();
 }));
 composer.addEventListener('submit',sendMessage);
 input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();composer.requestSubmit();}});

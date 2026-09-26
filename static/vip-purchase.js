@@ -44,7 +44,7 @@ function renderTicketList(tickets){
     const status=document.createElement('span');status.textContent=`${ticket.requested_days}日・${labels[ticket.status]||ticket.status}`;
     const time=document.createElement('span');time.textContent=fmt(ticket.updated_at);meta.append(status,time);
     if(Number(ticket.user_unread)>0){const unread=document.createElement('span');unread.className='unread';unread.textContent=ticket.user_unread;meta.appendChild(unread);}
-    button.append(key,meta);button.addEventListener('click',async()=>{state.key=ticket.purchase_key;history.replaceState(null,'',`/vip/purchase?key=${encodeURIComponent(state.key)}`);closeSidebar();await load(false);});fragment.appendChild(button);
+    button.append(key,meta);button.addEventListener('click',async()=>{state.key=ticket.purchase_key;history.replaceState(null,'',`/autocat/vip/purchase?key=${encodeURIComponent(state.key)}`);closeSidebar();await load(false);});fragment.appendChild(button);
   }
   root.replaceChildren(fragment);
 }
@@ -81,9 +81,9 @@ function render(ticket){
   if(chatClosed){const note=document.createElement('div');note.id='chat-closed-note';note.className='chat-closed';note.textContent='この購入DMは閉じられています。履歴は確認できます。';messagesEl.before(note);document.getElementById('ticket-status').textContent=`${labels[ticket.status]||ticket.status}・DM終了`;}
 }
 
-async function load(silent=false){if(state.loading)return;state.loading=true;try{const query=state.key?`?key=${encodeURIComponent(state.key)}`:'';const data=await api(`/api/vip/purchase/state${query}`);renderTicketList(data.tickets||[]);render(data.ticket);}catch(error){if(!silent)toast(error.message);}finally{state.loading=false;}}
+async function load(silent=false){if(state.loading)return;state.loading=true;try{const query=state.key?`?key=${encodeURIComponent(state.key)}`:'';const data=await api(`/autocat/api/vip/purchase/state${query}`);renderTicketList(data.tickets||[]);render(data.ticket);}catch(error){if(!silent)toast(error.message);}finally{state.loading=false;}}
 
-confirmButton.addEventListener('click',async()=>{updatePlanSelection();confirmButton.disabled=true;confirmError.textContent='';try{const data=await api('/autocat/api/vip/purchase/confirm',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({duration_days:state.selectedPlan})});state.key=data.ticket.purchase_key;history.replaceState(null,'',`/vip/purchase?key=${encodeURIComponent(state.key)}`);confirmEl.classList.remove('show');await load();toast(data.created?'購入申請を送信しました。':'進行中の購入申請を開きました。');}catch(error){confirmError.textContent=error.message;}finally{confirmButton.disabled=false;}});
+confirmButton.addEventListener('click',async()=>{updatePlanSelection();confirmButton.disabled=true;confirmError.textContent='';try{const data=await api('/autocat/api/vip/purchase/confirm',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify({duration_days:state.selectedPlan})});state.key=data.ticket.purchase_key;history.replaceState(null,'',`/autocat/vip/purchase?key=${encodeURIComponent(state.key)}`);confirmEl.classList.remove('show');await load();toast(data.created?'購入申請を送信しました。':'進行中の購入申請を開きました。');}catch(error){confirmError.textContent=error.message;}finally{confirmButton.disabled=false;}});
 document.getElementById('cancel-confirm').addEventListener('click',()=>{if(state.key)confirmEl.classList.remove('show');else location.assign('/autocat/vip-guide');});
 document.getElementById('new-request').addEventListener('click',openPlans);newRequestTop.addEventListener('click',openPlans);
 document.getElementById('history-toggle').addEventListener('click',()=>{sidebar.classList.add('open');sidebarBackdrop.classList.add('show');});sidebarBackdrop.addEventListener('click',closeSidebar);

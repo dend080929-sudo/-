@@ -26,7 +26,7 @@ function renderTickets(source){
     button.querySelector('.ticket-name').textContent=item.username;button.querySelector('.badge').textContent=item.deleted?'削除済み':(labels[item.status]||item.status);button.querySelector('.ticket-key').textContent=item.purchase_key;
     const meta=button.querySelectorAll('.ticket-meta span');meta[0].textContent=`${item.requested_days}日・${yen(item.price_yen)}`;meta[1].textContent=`ID ${item.account_public_id}`;meta[2].textContent=fmt(item.deleted_at||item.updated_at);
     if(item.payment_link){meta[0].textContent+=`・PayPay受信済み`;}if(Number(item.admin_unread)>0){const unread=document.createElement('span');unread.className='unread';unread.textContent=item.admin_unread;button.querySelector('.ticket-top').appendChild(unread);}
-    button.addEventListener('click',async()=>{state.key=item.purchase_key;history.replaceState(null,'',`/admin/vip?ticket=${encodeURIComponent(state.key)}`);await load(false,true);if(matchMedia('(max-width:850px)').matches)detailEl.scrollIntoView({behavior:'smooth',block:'start'});});fragment.appendChild(button);
+    button.addEventListener('click',async()=>{state.key=item.purchase_key;history.replaceState(null,'',`/autocat/admin/vip?ticket=${encodeURIComponent(state.key)}`);await load(false,true);if(matchMedia('(max-width:850px)').matches)detailEl.scrollIntoView({behavior:'smooth',block:'start'});});fragment.appendChild(button);
   }
   root.replaceChildren(fragment);
 }
@@ -88,7 +88,7 @@ async function load(silent=false,forceDetail=false){
   state.loading=true;
   try{
     const query=state.key?`?ticket=${encodeURIComponent(state.key)}`:'';
-    const data=await api(`/api/admin/vip/state${query}`);
+    const data=await api(`/autocat/api/admin/vip/state${query}`);
     state.data=data;
     document.getElementById('metric-accounts').textContent=data.summary.accounts;
     document.getElementById('metric-vip').textContent=data.summary.active_vip;

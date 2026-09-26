@@ -35,7 +35,7 @@ form.addEventListener('submit',async event=>{
   submit.disabled=true;submit.textContent=config.mode==='register'?'作成しています...':'確認しています...';
   try{
     const body={username,password,next:config.next,fingerprint:await browserFingerprint()};
-    const response=await fetch(`/api/account/${config.mode}`,{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify(body)});
+    const response=await fetch(`/autocat/api/account/${config.mode}`,{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':config.csrfToken},body:JSON.stringify(body)});
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(data.error||`通信エラー (${response.status})`);
     location.assign(data.redirect||'/autocat/account');
