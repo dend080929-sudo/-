@@ -326,6 +326,12 @@ def mail_incoming():
     return {"ok": True}, 202
 
 
+@app.route("/api/access/identify", methods=["POST"])
+def legacy_autocat_access_identify():
+    """旧版アクセス確認ページからのPOSTを/autocatへ引き継ぐ。"""
+    return redirect("/autocat/api/access/identify", code=307)
+
+
 @app.route("/callback")
 def callback():
     code = request.args.get("code")
