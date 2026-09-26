@@ -1095,8 +1095,8 @@ class AutocatLinkView(discord.ui.View):
     def __init__(self, base_url: str):
         super().__init__(timeout=300)
         self.add_item(discord.ui.Button(label="にゃんこ代行画面を開く", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/"))
-        self.add_item(discord.ui.Button(label="Discordログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/"))
-        self.add_item(discord.ui.Button(label="VIP管理画面ログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/admin/vip"))
+        self.add_item(discord.ui.Button(label="Discordログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/autocat/"))
+        self.add_item(discord.ui.Button(label="VIP管理画面ログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/autocat/admin/vip"))
 
 
 @bot.tree.command(name="にゃんこ代行", description="完全版のにゃんこ大戦争代行画面を開きます")
