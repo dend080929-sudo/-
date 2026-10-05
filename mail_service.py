@@ -124,6 +124,52 @@ def _mail_record(address: str) -> tuple[str | None, dict | None]:
     return None, None
 
 
+def extract_email_addresses(value: str) -> list[str]:
+    """商品本文からメールアドレスを抽出する（パスワード等は保存しない）。"""
+    pattern = r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}"
+    found = []
+    for address in re.findall(pattern, str(value or "").lower()):
+        if address not in found:
+            found.append(address)
+    return found
+
+
+def register_purchase_delivery(address: str, user_id: int, channel_id: int, guild_id: int, product_name: str) -> None:
+    """購入者専用チャンネルへの配送先をSheetsへ保存する。"""
+    normalized = str(address or "").lower().strip()
+    if not normalized or "@" not in normalized:
+        raise ValueError("商品本文からメールアドレスを検出できませんでした")
+    accounts = load_accounts()
+    accounts[f"__delivery__:{normalized}"] = {
+        "address": normalized,
+        "user_id": str(user_id),
+        "channel_id": str(channel_id),
+        "guild_id": str(guild_id),
+        "product_name": str(product_name or "商品"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    save_accounts(accounts)
+
+
+def get_purchase_delivery(address: str) -> dict:
+    normalized = str(address or "").lower().strip()
+    match = re.search(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}", normalized)
+    if match:
+        normalized = match.group(0)
+    info = load_accounts().get(f"__delivery__:{normalized}", {})
+    return info if isinstance(info, dict) else {}
+
+
+def remove_purchase_delivery(address: str) -> None:
+    normalized = str(address or "").lower().strip()
+    match = re.search(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}", normalized)
+    if match:
+        normalized = match.group(0)
+    accounts = load_accounts()
+    if accounts.pop(f"__delivery__:{normalized}", None) is not None:
+        save_accounts(accounts)
+
+
 def register_gmail(user_id: int, gmail: str) -> str:
     gmail = gmail.strip().lower()
     if "@" not in gmail or not gmail.endswith("@gmail.com") or gmail.count("@") != 1:
@@ -267,7 +313,8 @@ async def deliver_incoming(bot, payload: dict) -> None:
 
     envelope_recipient = str(payload.get("to", "")).lower().strip()
     original_recipient = str(payload.get("original_to", "")).lower().strip()
-    recipient = original_recipient or envelope_recipient
+    address_candidates = extract_email_addresses(original_recipient or envelope_recipient)
+    recipient = address_candidates[0] if address_candidates else (original_recipient or envelope_recipient)
     record_key, info = _mail_record(recipient)
     if not info and envelope_recipient != recipient:
         recipient = envelope_recipient
@@ -330,3 +377,22 @@ async def deliver_incoming(bot, payload: dict) -> None:
         stored_info["received_message_ids"] = ids[-50:]
         accounts[record_key or recipient] = stored_info
         save_accounts(accounts)
+
+    # 購入者専用チャンネルが登録されている場合は、同じメールを保管用にも複製する。
+    delivery = get_purchase_delivery(recipient)
+    target_ids = []
+    for key in (os.environ.get("MAIL_ARCHIVE_CHANNEL_ID", ""), delivery.get("channel_id", "")):
+        if str(key).isdigit() and int(key) not in target_ids and int(key) != int(channel.id):
+            target_ids.append(int(key))
+    for target_id in target_ids:
+        target = bot.get_channel(target_id)
+        if target is None:
+            try:
+                target = await bot.fetch_channel(target_id)
+            except Exception:
+                target = None
+        if target is not None:
+            try:
+                await target.send(embed=embed)
+            except Exception as exc:
+                print(f"追加メール転送をスキップ: {exc}")
