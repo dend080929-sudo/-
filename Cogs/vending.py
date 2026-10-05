@@ -7,11 +7,13 @@ from discord import app_commands, ui
 import json
 import sys
 import os
+import re
 import uuid
 import io
 from utils import is_allowed
 import paypayu
 from persistent_store import load_json_store, save_json_store
+from mail_service import extract_email_addresses, register_purchase_delivery, remove_purchase_delivery
 import random
 import requests
 from bs4 import BeautifulSoup
@@ -134,6 +136,59 @@ def load_role_assignment_data() -> dict:
 
 def save_role_assignment_data(data: dict) -> None:
     save_json(ROLE_ASSIGNMENT_DATA_FILE, data)
+
+
+async def create_purchase_mail_channel(guild: discord.Guild, buyer: discord.Member, bot: commands.Bot, address: str, product_name: str) -> discord.TextChannel:
+    """Create a private mail-receiving channel for a vending-machine buyer."""
+    category = discord.utils.get(guild.categories, name="【購入者メール】")
+    if category is None:
+        category = await guild.create_category("【購入者メール】")
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        buyer: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+    }
+    if guild.owner and guild.owner != buyer:
+        overwrites[guild.owner] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+    safe_display_name = re.sub(r"[|/\\#:@]", "-", buyer.display_name).strip() or "購入者"
+    safe_display_name = safe_display_name[:70]
+    channel = await guild.create_text_channel(
+        f"✉️{safe_display_name}|受信メール確認"[:100],
+        category=category,
+        overwrites=overwrites,
+        topic=f"購入商品: {product_name} / 宛先: {address}",
+    )
+    await channel.send(
+        f"{buyer.mention} 専用メール受信チャンネルです。\n"
+        f"宛先: `{address}`\n"
+        "このアドレスに届いたメールだけがここへ表示されます。",
+        view=PurchaseMailCloseView(),
+    )
+    register_purchase_delivery(address, buyer.id, channel.id, guild.id, product_name)
+    return channel
+
+
+class PurchaseMailCloseView(discord.ui.View):
+    """購入者または管理権限者が購入者用チャンネルを閉じるView。"""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="チャンネルを削除", style=discord.ButtonStyle.danger, custom_id="purchase_mail_close")
+    async def close_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.user
+        allowed = member.guild_permissions.manage_channels
+        if not allowed and interaction.channel is not None:
+            allowed = interaction.channel.permissions_for(member).view_channel
+        if not allowed:
+            return await interaction.response.send_message("このチャンネルを削除する権限がありません。", ephemeral=True)
+        await interaction.response.send_message("この購入者用チャンネルを削除します。", ephemeral=True)
+        if interaction.channel is not None:
+            topic = interaction.channel.topic or ""
+            match = re.search(r"宛先:\s*([^\s]+)", topic)
+            if match:
+                remove_purchase_delivery(match.group(1))
+            await interaction.channel.delete(reason=f"購入者メールチャンネル閉鎖: {member} ({member.id})")
 
 # ==================== オートコンプリート関数 ====================
 
@@ -1234,6 +1289,25 @@ class VendingMachineCog(commands.Cog):
                 embed.add_field(name="購入した商品", value=purchased_content, inline=False)
                 embed.set_footer(text="developer@_Avel")
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+                # 払い出した商品本文からメールアドレスだけを検出し、購入者専用受信チャンネルを作成する。
+                mail_addresses = extract_email_addresses(purchased_content_text)
+                created_mail_channels = []
+                for mail_address in mail_addresses[:10]:
+                    try:
+                        mail_channel = await create_purchase_mail_channel(
+                            interaction.guild, interaction.user, self.bot,
+                            mail_address, self.product.get("name", "商品"),
+                        )
+                        created_mail_channels.append(mail_channel.mention)
+                    except Exception as mail_exc:
+                        print(f"購入者メールチャンネル作成エラー: {type(mail_exc).__name__}")
+                if created_mail_channels:
+                    await interaction.followup.send(
+                        "📨 払い出しメールアドレスの受信チャンネルを作成しました。\n"
+                        + "\n".join(created_mail_channels),
+                        ephemeral=True,
+                    )
                 
                 vending_data = load_json(VENDING_DATA_FILE)
                 if self.vending_machine_id in vending_data and isinstance(vending_data[self.vending_machine_id], dict):
@@ -2239,3 +2313,4 @@ class VendingMachineCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(VendingMachineCog(bot))
+    bot.add_view(PurchaseMailCloseView())
