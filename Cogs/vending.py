@@ -1304,7 +1304,7 @@ class VendingMachineCog(commands.Cog):
                         print(f"購入者メールチャンネル作成エラー: {type(mail_exc).__name__}")
                 if created_mail_channels:
                     await interaction.followup.send(
-                        "📨 払い出しメールアドレスの受信チャンネルを作成しました。\n"
+                        "📨 認証メール受信チャンネルを作成しました。\n"
                         + "\n".join(created_mail_channels),
                         ephemeral=True,
                     )
