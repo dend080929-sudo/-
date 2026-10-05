@@ -115,10 +115,9 @@ def send_usage_log(
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("BEGIN IMMEDIATE")
                 _ensure_counter(conn)
-                row = conn.execute(
-                    "SELECT success_count FROM discord_log_state WHERE id=1"
-                ).fetchone()
-                next_count = int(row[0] if row else 0) + 1
+                # 表示番号は別DBの送信成功回数ではなく、サイト側の確定した
+                # 全体利用数を正とする。再起動や送信失敗で番号がずれないようにする。
+                authoritative_count = max(0, int(total_count))
                 payload = {
                     "allowed_mentions": {"parse": []},
                     "embeds": [{
@@ -126,8 +125,8 @@ def send_usage_log(
                         "description": _description_text(description),
                         "color": 0xF5C542 if title == "VIP" else 0x7A8491,
                         "fields": [
-                            {"name": "実績数", "value": str(next_count), "inline": True},
-                            {"name": "全実績数", "value": str(max(0, int(total_count))), "inline": True},
+                            {"name": "実績数", "value": str(authoritative_count), "inline": True},
+                            {"name": "全実績数", "value": str(authoritative_count), "inline": True},
                         ],
                     }],
                 }
@@ -136,7 +135,7 @@ def send_usage_log(
                     return False
                 conn.execute(
                     "UPDATE discord_log_state SET success_count=? WHERE id=1",
-                    (next_count,),
+                    (authoritative_count,),
                 )
                 conn.commit()
                 return True
