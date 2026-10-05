@@ -79,6 +79,8 @@ class MailDeleteButton(discord.ui.Button):
             address = get_current_address(interaction.user.id)
             hide_current_address(interaction.user.id)
             await delete_received_messages(interaction.client, address)
+            gmail_info = get_gmail_info(interaction.user.id)
+            await delete_received_messages(interaction.client, gmail_info.get("current_alias"))
             await refresh_panel(interaction)
             await interaction.followup.send("メールの表示を削除しました。アドレス自体は停止していません。", ephemeral=True)
         except Exception as exc:
@@ -143,7 +145,10 @@ class GmailDeleteButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         await ensure_deferred(interaction, ephemeral=True)
         try:
+            gmail_info = get_gmail_info(interaction.user.id)
+            alias = gmail_info.get("current_alias")
             if clear_gmail_alias(interaction.user.id):
+                await delete_received_messages(interaction.client, alias)
                 await refresh_panel(interaction)
                 await interaction.followup.send("表示中のエイリアスを削除しました。登録Gmailは残っています。", ephemeral=True)
             else:
@@ -159,7 +164,10 @@ class GmailUnregisterButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         await ensure_deferred(interaction, ephemeral=True)
         try:
+            gmail_info = get_gmail_info(interaction.user.id)
+            alias = gmail_info.get("current_alias")
             if unregister_gmail(interaction.user.id):
+                await delete_received_messages(interaction.client, alias)
                 await refresh_panel(interaction)
                 await interaction.followup.send("Gmailの登録を解除しました。発行履歴はSheetsに残ります。", ephemeral=True)
             else:
