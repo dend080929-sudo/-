@@ -944,6 +944,20 @@ def current_site_user():
     return None
 
 
+def achievement_actor() -> str:
+    """Return a non-secret display name for the Discord achievement log."""
+    discord_user = current_user() or {}
+    site_user = current_site_user() or {}
+    name = str(discord_user.get("username") or "不明")
+    discord_id = str(discord_user.get("id") or "不明")
+    site_name = str(site_user.get("username") or "未ログイン")
+    return f"Discord: {name} ({discord_id}) / サイト: {site_name}"
+
+
+def job_achievement_actor(job_id: str) -> str:
+    return str((_load_job(job_id) or {}).get("requester") or "実行者: 不明")
+
+
 def site_vip_confirmed() -> bool:
     user = current_site_user()
     return bool(user and user.get("is_vip"))
@@ -4710,7 +4724,12 @@ def run_job_daiko(job_id, operation_id, transfer_code, auth_code, selected, char
             _close_operation(
                 operation_id, status="done", recovery_status="not_needed"
             )
-            send_usage_log(access_tier, final_logs, total_count, USAGE_DB_PATH)
+            send_usage_log(
+                access_tier,
+                [f"実行者: {job_achievement_actor(job_id)}", *final_logs],
+                total_count,
+                USAGE_DB_PATH,
+            )
         else:
             # 最終POSTはサーバー側だけ成功して応答が失われた可能性がある。
             # 直後に自動再発行すると既知のコードまで無効化し得るため、最新の
@@ -4833,7 +4852,7 @@ def run_job_create(job_id, selected, char_list, custom_amounts, count=1, custom_
         })
         send_usage_log(
             access_tier,
-            [f"新規アカウント作成 ×{len(accounts)}", *final_logs],
+            [f"実行者: {job_achievement_actor(job_id)}", f"新規アカウント作成 ×{len(accounts)}", *final_logs],
             total_count,
             USAGE_DB_PATH,
         )
@@ -5036,7 +5055,7 @@ def run_job_clone(job_id, operation_id, transfer_code, auth_code, count=1, acces
         )
         send_usage_log(
             access_tier,
-            [f"アカウント複製 ×{len(copies)}"],
+            [f"実行者: {job_achievement_actor(job_id)}", f"アカウント複製 ×{len(copies)}"],
             total_count,
             USAGE_DB_PATH,
         )
@@ -5313,7 +5332,8 @@ def api_run_daiko():
                              "job_access_hash": job_access_hash,
                              "quota_reservation_id": quota_reservation_id,
                              "trial_vip_reservation_id": trial_vip_reservation_id,
-                             "error": None, "transfer_code": None, "auth_code": None,
+                             "error": None, "requester": achievement_actor(),
+                             "transfer_code": None, "auth_code": None,
                              "applied": [], "created_at": now, "updated_at": now,
                              "transfer_received": False})
     except Exception:
@@ -5421,7 +5441,8 @@ def api_run_create():
                              "job_access_hash": job_access_hash,
                              "quota_reservation_id": quota_reservation_id,
                              "trial_vip_reservation_id": trial_vip_reservation_id,
-                             "error": None, "transfer_code": None, "auth_code": None,
+                             "error": None, "requester": achievement_actor(),
+                             "transfer_code": None, "auth_code": None,
                              "applied": [], "accounts": [], "created_at": now, "updated_at": now})
     except Exception:
         _discard_unstarted_job(job_id)
@@ -5491,7 +5512,7 @@ def api_run_clone():
                              "job_access_hash": job_access_hash,
                              "quota_reservation_id": quota_reservation_id,
                              "trial_vip_reservation_id": trial_vip_reservation_id,
-                             "error": None,
+                             "error": None, "requester": achievement_actor(),
                              "orig_transfer_code": None, "orig_auth_code": None,
                              "copy_transfer_code": None, "copy_auth_code": None,
                              "copies": [], "created_at": now, "updated_at": now,
