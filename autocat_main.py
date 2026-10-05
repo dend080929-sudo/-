@@ -951,7 +951,11 @@ def achievement_actor() -> str:
     name = str(discord_user.get("username") or "不明")
     discord_id = str(discord_user.get("id") or "不明")
     site_name = str(site_user.get("username") or "未ログイン")
-    return f"Discord: {name} ({discord_id}) / サイト: {site_name}"
+    if discord_id.isdigit():
+        discord_display = f"[{name}](https://discord.com/users/{discord_id})"
+    else:
+        discord_display = name
+    return f"Discord: {discord_display} ({discord_id}) / サイト: {site_name}"
 
 
 def job_achievement_actor(job_id: str) -> str:
