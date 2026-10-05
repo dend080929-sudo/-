@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import os
+import re
 import secrets
 import string
 from datetime import datetime, timezone
@@ -97,6 +98,32 @@ def get_gmail_info(user_id: int) -> dict:
     return info if isinstance(info, dict) else {}
 
 
+def _mail_record(address: str) -> tuple[str | None, dict | None]:
+    """Find a Cloudflare address or a registered Gmail alias record."""
+    normalized = str(address or "").lower().strip()
+    match = re.search(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}", normalized)
+    if match:
+        normalized = match.group(0)
+    if not normalized:
+        return None, None
+    accounts = load_accounts()
+    info = accounts.get(normalized)
+    if isinstance(info, dict) and not normalized.startswith("__"):
+        return normalized, info
+    for key, candidate in accounts.items():
+        if not key.startswith("__gmail__:") or not isinstance(candidate, dict):
+            continue
+        aliases = {str(candidate.get("current_alias", "")).lower().strip()}
+        aliases.update(
+            str(item.get("alias", "")).lower().strip()
+            for item in candidate.get("history", [])
+            if isinstance(item, dict) and not item.get("deleted")
+        )
+        if normalized in aliases:
+            return key, candidate
+    return None, None
+
+
 def register_gmail(user_id: int, gmail: str) -> str:
     gmail = gmail.strip().lower()
     if "@" not in gmail or not gmail.endswith("@gmail.com") or gmail.count("@") != 1:
@@ -188,7 +215,8 @@ async def delete_received_messages(bot, address: str | None) -> None:
     if not address:
         return
     accounts = load_accounts()
-    info = accounts.get(address.lower().strip(), {})
+    record_key, found = _mail_record(address)
+    info = found or {}
     panel_message_ids = list(info.get("received_message_ids", []))
     if not panel_message_ids:
         return
@@ -216,7 +244,9 @@ async def delete_received_messages(bot, address: str | None) -> None:
                     await message.delete()
         except Exception as exc:
             print(f"過去の受信メール表示の削除をスキップ: {exc}")
-    info["received_message_ids"] = []
+    if record_key:
+        info["received_message_ids"] = []
+        accounts[record_key] = info
     save_accounts(accounts)
 
 
@@ -235,9 +265,14 @@ def clean_text(value: str, limit: int = 3500) -> str:
 async def deliver_incoming(bot, payload: dict) -> None:
     import discord
 
-    recipient = str(payload.get("to", "")).lower().strip()
-    info = get_account(recipient)
-    destination = resolve_destination(recipient)
+    envelope_recipient = str(payload.get("to", "")).lower().strip()
+    original_recipient = str(payload.get("original_to", "")).lower().strip()
+    recipient = original_recipient or envelope_recipient
+    record_key, info = _mail_record(recipient)
+    if not info and envelope_recipient != recipient:
+        recipient = envelope_recipient
+        record_key, info = _mail_record(recipient)
+    destination = "inbox" if info and not info.get("display_deleted", False) else "archive"
     sender = clean_text(str(payload.get("from", "不明")), 500)
     subject = clean_text(str(payload.get("subject", "（件名なし）")), 500)
     body = clean_text(str(payload.get("text") or payload.get("body") or "（本文なし）"))
@@ -289,9 +324,9 @@ async def deliver_incoming(bot, payload: dict) -> None:
     sent_message = await channel.send(embed=embed)
     if destination == "inbox" and info:
         accounts = load_accounts()
-        stored_info = accounts.get(recipient, info)
+        stored_info = accounts.get(record_key or recipient, info)
         ids = list(stored_info.get("received_message_ids", []))
         ids.append(str(sent_message.id))
         stored_info["received_message_ids"] = ids[-50:]
-        accounts[recipient] = stored_info
+        accounts[record_key or recipient] = stored_info
         save_accounts(accounts)
