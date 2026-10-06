@@ -118,6 +118,19 @@ def save_json(file_path: str, data: dict) -> None:
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+
+async def update_paid_achievement_channel_name(channel: discord.TextChannel) -> None:
+    """有料自販機の公開実績チャンネル名を投稿数に合わせて更新する。"""
+    try:
+        count = 0
+        async for _ in channel.history(limit=None):
+            count += 1
+        new_name = f"👑｜実績ー{count}"
+        if channel.name != new_name:
+            await channel.edit(name=new_name)
+    except Exception as exc:
+        print(f"有料自販機実績数更新エラー: {type(exc).__name__}")
+
 def load_paypay_data() -> dict:
     return load_json_store("paypay_accounts", PAYPAY_DATA_FILE)
 
@@ -1492,6 +1505,7 @@ class VendingMachineCog(commands.Cog):
                         if global_log_channel:
                             log_embed_obj = create_log_embed()
                             await global_log_channel.send(embed=log_embed_obj)
+                            await update_paid_achievement_channel_name(global_log_channel)
                     except:
                         pass
 
