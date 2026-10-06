@@ -1786,7 +1786,7 @@ class VendingMachineCog(commands.Cog):
                         color=discord.Color.red()
                     )
                     embed.set_footer(text="developer@_Avel")
-                    return await interaction.response.send_message(embed=embed, ephemeral=True)
+                    return await interaction.followup.send(embed=embed, ephemeral=True)
                 
                 products = vm.get("products", [])
                 await check_stock(interaction, products)
