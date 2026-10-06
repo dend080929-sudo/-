@@ -994,11 +994,12 @@ class VendingMachineCog(commands.Cog):
             )
 
         async def callback(self, interaction: discord.Interaction):
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 vending_data = load_json(VENDING_DATA_FILE)
                 vm = vending_data.get(self.vending_machine_id, {})
                 if not vm:
-                    return await interaction.response.send_message("自販機が見つかりません。", ephemeral=True)
+                    return await interaction.followup.send("自販機が見つかりません。", ephemeral=True)
                 
                 embed = discord.Embed(
                     title="購入する商品を選択してください。",
@@ -1009,7 +1010,7 @@ class VendingMachineCog(commands.Cog):
                     self.bot,
                     self.values[0]
                 )
-                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
             except Exception as e:
                 await handle_error(interaction, e)
 
@@ -1044,16 +1045,17 @@ class VendingMachineCog(commands.Cog):
             self.add_item(self.coupon_input)
 
         async def on_submit(self, interaction: discord.Interaction):
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 if self.product.get('infinite_stock'):
                     quantity = 1
                 else:
                     quantity = int(self.quantity_input.value)
                     if quantity <= 0: 
-                        return await interaction.response.send_message("購入数は1以上で入力してください。", ephemeral=True)
+                        return await interaction.followup.send("購入数は1以上で入力してください。", ephemeral=True)
                     
             except ValueError:
-                return await interaction.response.send_message("購入数には整数を入力してください。", ephemeral=True)
+                return await interaction.followup.send("購入数には整数を入力してください。", ephemeral=True)
 
             coupon_code = self.coupon_input.value.strip() if self.coupon_input.value else None
             
@@ -1065,9 +1067,9 @@ class VendingMachineCog(commands.Cog):
                     if coupon_info.get("vending_machine_id") == self.vending_machine_id:
                         discount = coupon_info.get("discount", 0)
                     else:
-                        return await interaction.response.send_message("このクーポンコードはこの自販機では使用できません。", ephemeral=True)
+                        return await interaction.followup.send("このクーポンコードはこの自販機では使用できません。", ephemeral=True)
                 else:
-                    return await interaction.response.send_message("無効なクーポンコードです。", ephemeral=True)
+                    return await interaction.followup.send("無効なクーポンコードです。", ephemeral=True)
             
             price_key = f"price_{self.payment_method}"
             product_price = self.product.get(price_key, self.product.get('price', 0))
@@ -1115,7 +1117,7 @@ class VendingMachineCog(commands.Cog):
                 0,
             )
             
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     class PointUseModal(ui.Modal, title="ポイントを使う"):
         points_input = ui.TextInput(
@@ -1135,14 +1137,15 @@ class VendingMachineCog(commands.Cog):
             self.payment_method = payment_method
 
         async def on_submit(self, interaction: discord.Interaction):
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 points_used = int(str(self.points_input.value).strip())
             except ValueError:
-                return await interaction.response.send_message("使用ポイントには整数を入力してください。", ephemeral=True)
+                return await interaction.followup.send("使用ポイントには整数を入力してください。", ephemeral=True)
             balance = get_balance(interaction.user.id)
             maximum = min(balance, self.final_price)
             if points_used <= 0 or points_used > maximum:
-                return await interaction.response.send_message(
+                return await interaction.followup.send(
                     f"使用できるポイントは1〜{maximum}ポイントです。現在の残高: {balance}ポイント",
                     ephemeral=True,
                 )
@@ -1157,7 +1160,7 @@ class VendingMachineCog(commands.Cog):
                 self.vending_machine_id, self.product, self.quantity, new_price,
                 self.bot, self.payment_method, points_used,
             )
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     class PurchaseConfirmView(ui.View):
         def __init__(self, vending_machine_id: str, product: dict, quantity: int, final_price: int, bot: commands.Bot, payment_method: str, points_used: int = 0):
@@ -1624,6 +1627,20 @@ class VendingMachineCog(commands.Cog):
             )
             await confirm_view.process_purchase(interaction, self.kyash_input.value)
 
+    class ProductReadyView(ui.View):
+        def __init__(self, vending_machine_id: str, product: dict, bot: commands.Bot, payment_method: str):
+            super().__init__(timeout=180)
+            self.vending_machine_id = vending_machine_id
+            self.product = product
+            self.bot = bot
+            self.payment_method = payment_method
+
+        @ui.button(label="購入情報を入力", style=discord.ButtonStyle.primary)
+        async def open_purchase_modal(self, interaction: discord.Interaction, button: ui.Button):
+            await interaction.response.send_modal(VendingMachineCog.CouponModal(
+                self.vending_machine_id, self.product, self.bot, self.payment_method
+            ))
+
     class ProductSelect(ui.Select):
         def __init__(self, vending_machine_id: str, bot: commands.Bot, payment_method: str):
             self.vending_machine_id = vending_machine_id
@@ -1669,8 +1686,9 @@ class VendingMachineCog(commands.Cog):
             )
 
         async def callback(self, interaction: discord.Interaction):
+            await ensure_deferred(interaction, ephemeral=True)
             if self.values[0] == "none":
-                return await interaction.response.send_message("現在販売中の商品はありません。", ephemeral=True)
+                return await interaction.followup.send("現在販売中の商品はありません。", ephemeral=True)
             
             try:
                 vending_data = load_json(VENDING_DATA_FILE)
@@ -1682,21 +1700,21 @@ class VendingMachineCog(commands.Cog):
                         color=discord.Color.red()
                     )
                     embed.set_footer(text="developer@_Avel")
-                    return await interaction.response.send_message(embed=embed, ephemeral=True)
+                    return await interaction.followup.send(embed=embed, ephemeral=True)
                 
                 products = vm.get("products", [])
                 product = next((p for p in products if p["product_id"] == self.values[0]), None)
                 if not product: 
-                    return await interaction.response.send_message("商品が見つかりません。", ephemeral=True)
+                    return await interaction.followup.send("商品が見つかりません。", ephemeral=True)
                 
                 if product.get("infinite_stock"):
-                    modal = VendingMachineCog.CouponModal(
-                        self.vending_machine_id, 
-                        product, 
-                        self.bot,
-                        self.payment_method
+                    await interaction.followup.send(
+                        "商品を確認しました。下のボタンから購入情報を入力してください。",
+                        view=VendingMachineCog.ProductReadyView(
+                            self.vending_machine_id, product, self.bot, self.payment_method
+                        ),
+                        ephemeral=True,
                     )
-                    await interaction.response.send_modal(modal)
                 else:
                     lines = [line for line in read_stock_content(product.get("stock_file", "")).splitlines() if line.strip()]
                     if len(lines) == 0:
@@ -1706,15 +1724,15 @@ class VendingMachineCog(commands.Cog):
                             color=discord.Color.orange()
                         )
                         embed.set_footer(text="developer@_Avel")
-                        return await interaction.response.send_message(embed=embed, ephemeral=True)
+                        return await interaction.followup.send(embed=embed, ephemeral=True)
                     
-                    modal = VendingMachineCog.CouponModal(
-                        self.vending_machine_id, 
-                        product, 
-                        self.bot,
-                        self.payment_method
+                    await interaction.followup.send(
+                        "商品を確認しました。下のボタンから購入情報を入力してください。",
+                        view=VendingMachineCog.ProductReadyView(
+                            self.vending_machine_id, product, self.bot, self.payment_method
+                        ),
+                        ephemeral=True,
                     )
-                    await interaction.response.send_modal(modal)
                 
             except Exception as e:
                 await handle_error(interaction, e)
@@ -1757,6 +1775,7 @@ class VendingMachineCog(commands.Cog):
             self.vending_machine_id = vending_machine_id
 
         async def callback(self, interaction: discord.Interaction):
+            await ensure_deferred(interaction, ephemeral=True)
             try:
                 vending_data = load_json(VENDING_DATA_FILE)
                 vm = vending_data.get(self.vending_machine_id, {})
@@ -1770,7 +1789,6 @@ class VendingMachineCog(commands.Cog):
                     return await interaction.response.send_message(embed=embed, ephemeral=True)
                 
                 products = vm.get("products", [])
-                await ensure_deferred(interaction, ephemeral=True)
                 await check_stock(interaction, products)
             except Exception as e:
                 await handle_error(interaction, e)

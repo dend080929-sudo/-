@@ -68,14 +68,16 @@ class PointsPanelView(discord.ui.View):
 
     @discord.ui.button(label="ポイント残高", emoji="💰", style=discord.ButtonStyle.primary, custom_id="points_panel_balance")
     async def balance(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
+        await ensure_deferred(interaction, ephemeral=True)
+        await interaction.followup.send(
             f"現在のポイント残高は **{get_balance(interaction.user.id)}ポイント** です。", ephemeral=True
         )
 
     @discord.ui.button(label="自分の招待コード", emoji="🔗", style=discord.ButtonStyle.success, custom_id="points_panel_code")
     async def code(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await ensure_deferred(interaction, ephemeral=True)
         code = ensure_invite_code(interaction.user.id)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"あなたの招待コードは **`{code}`** です。\n"
             "このコードは複数の友達に使ってもらえます。招待される側は1アカウントにつき1回だけ登録できます。",
             ephemeral=True,
@@ -87,11 +89,13 @@ class PointsPanelView(discord.ui.View):
 
     @discord.ui.button(label="履歴", emoji="📜", style=discord.ButtonStyle.secondary, custom_id="points_panel_history")
     async def history(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(_history_text(interaction.user.id), ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
+        await interaction.followup.send(_history_text(interaction.user.id), ephemeral=True)
 
     @discord.ui.button(label="ランキング", emoji="🏆", style=discord.ButtonStyle.secondary, custom_id="points_panel_ranking")
     async def ranking(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(_ranking_text(), ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
+        await interaction.followup.send(_ranking_text(), ephemeral=True)
 
 
 class PointsCog(commands.Cog):

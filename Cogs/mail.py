@@ -83,7 +83,9 @@ class MailStockCredentialSelect(discord.ui.Select):
             return await interaction.response.send_message("管理者権限が必要です。", ephemeral=True)
         if self.values[0] == "none":
             return await interaction.response.send_message("先にメールアドレスまたはGmailエイリアスを発行してください。", ephemeral=True)
-        await interaction.response.send_message("追加先の有料自販機を選択してください。", view=MailStockMachineView(self.user_id, self.values[0]), ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
+        view = MailStockMachineView(self.user_id, self.values[0])
+        await interaction.followup.send("追加先の有料自販機を選択してください。", view=view, ephemeral=True)
 
 
 class MailStockMachineView(discord.ui.View):
@@ -106,9 +108,11 @@ class MailStockMachineSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "none":
             return await interaction.response.send_message("有料自販機がありません。", ephemeral=True)
-        await interaction.response.send_message(
+        await ensure_deferred(interaction, ephemeral=True)
+        view = MailStockProductView(self.user_id, self.credential_type, self.values[0])
+        await interaction.followup.send(
             "追加先の商品を選択してください。",
-            view=MailStockProductView(self.user_id, self.credential_type, self.values[0]),
+            view=view,
             ephemeral=True,
         )
 
@@ -135,11 +139,12 @@ class MailStockProductSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "none":
             return await interaction.response.send_message("追加可能な商品がありません。", ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
         from Cogs.vending import append_stock_content, load_json
         data = load_json("vending_data.json")
         product = next((p for p in data.get(self.vending_machine_id, {}).get("products", []) if str(p.get("product_id")) == self.values[0]), None)
         if not product or not product.get("stock_file") or product.get("infinite_stock"):
-            return await interaction.response.send_message("この商品には在庫を追加できません。", ephemeral=True)
+            return await interaction.followup.send("この商品には在庫を追加できません。", ephemeral=True)
         if self.credential_type == "address":
             address = get_current_address(self.user_id)
             secret = get_current_address_secret(self.user_id)
@@ -150,9 +155,9 @@ class MailStockProductSelect(discord.ui.Select):
             secret = gmail.get("current_secret")
             label = "Gmailエイリアス"
         if not address or not secret:
-            return await interaction.response.send_message("選択した連携情報が見つかりません。", ephemeral=True)
+            return await interaction.followup.send("選択した連携情報が見つかりません。", ephemeral=True)
         append_stock_content(product["stock_file"], [f"{label}: {address} | パスワード: {secret}"])
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ `{product.get('name', '商品')}`の在庫に1件追加しました。\n追加内容: `{address}`",
             ephemeral=True,
         )
@@ -165,9 +170,11 @@ class AddMailToVendingButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("管理者権限が必要です。", ephemeral=True)
-        await interaction.response.send_message(
+        await ensure_deferred(interaction, ephemeral=True)
+        view = MailStockCredentialView(interaction.user.id)
+        await interaction.followup.send(
             "自販機へ追加するメール情報を選択してください。",
-            view=MailStockCredentialView(interaction.user.id),
+            view=view,
             ephemeral=True,
         )
 
