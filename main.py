@@ -147,9 +147,10 @@ async def setup_hook():
         ("paypay_accounts", "paypay_data.json"),
         ("kyash_accounts", "kyash_data.json"),
         ("mail_accounts", "mail_accounts.json"),
+        ("points_and_referrals", "points_and_referrals.json"),
     ])
     # 本体側の自販機機能と有料自販機Cogを読み込む
-    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog", "Cogs.mail"]
+    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog", "Cogs.mail", "Cogs.points"]
     for extension in extensions:
         try:
             await bot.load_extension(extension)
@@ -1134,6 +1135,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="👑 実績管理", value="実績チャンネル（ログチャンネル）の投稿数を自動カウントし、チャンネル名を `👑｜実績ー〇〇` に自動更新します。", inline=False)
     embed.add_field(name="💬 発言機能", value="`/発言` - ボットに指定した言葉を喋らせます。", inline=False)
     embed.add_field(name="✉️ メール機能", value="`/メールパネル設置` - メールアドレス発行パネルを設置します。Gmailの4桁エイリアスにも対応しています。", inline=False)
+    embed.add_field(name="🎁 ポイント・友達招待", value="`/ポイントパネル設置`（管理者）- 客がボタンで使える説明パネルを設置\n`/ポイント`・`/ポイント履歴` - 残高や履歴を確認\n`/招待コード`・`/招待登録` - 招待コードを発行・登録\n`/ポイントランキング` - ランキングを表示\n`/ユーザー情報`（管理者）- 購入・支払額・ポイント・招待情報を確認\n※購入確認画面の「ポイントを使う」から1ポイント＝1円で値引き可能", inline=False)
     embed.add_field(name="🐱 にゃんこ代行", value="`/にゃんこ代行` - 完全版の代行画面を開きます。引き継ぎコード・認証番号・各種設定をWeb画面で指定できます。", inline=False)
     embed.add_field(name="💾 バックアップ＆呼び出し", value="`/バックアップ` - メンバーデータを手動でバックアップし、登録人数を表示します。\n`/一括呼び戻し` - 登録されている全ユーザーをサーバーに一斉呼び戻しします。", inline=False)
     embed.add_field(name="💥 チャンネル管理", value="`/チャンネル再作成` - 現在のチャンネルを初期化（作り直し）します。", inline=False)
