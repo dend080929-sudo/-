@@ -40,6 +40,22 @@ def get_current_address(user_id: int) -> str | None:
     return candidates[0][0]
 
 
+def generate_integration_secret() -> str:
+    """10文字: 大文字1文字、ドット1個、残り8文字は英小文字または数字。"""
+    alphabet = string.ascii_lowercase + string.digits
+    chars = [secrets.choice(alphabet) for _ in range(8)]
+    chars.insert(secrets.randbelow(9), ".")
+    chars.insert(secrets.randbelow(10), secrets.choice(string.ascii_uppercase))
+    return "".join(chars)
+
+
+def get_current_address_secret(user_id: int) -> str | None:
+    address = get_current_address(user_id)
+    if not address:
+        return None
+    return str(load_accounts().get(address, {}).get("integration_secret", "")) or None
+
+
 def get_panel_info(user_id: int) -> dict:
     info = load_accounts().get(f"__panel__:{user_id}", {})
     return info if isinstance(info, dict) else {}
@@ -73,6 +89,7 @@ def issue_address(user_id: int) -> str:
         "user_id": str(user_id),
         "display_deleted": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "integration_secret": generate_integration_secret(),
     }
     save_accounts(accounts)
     return address
@@ -183,6 +200,7 @@ def register_gmail(user_id: int, gmail: str) -> str:
         "user_id": str(user_id),
         "gmail": gmail,
         "current_alias": old.get("current_alias", ""),
+        "current_secret": old.get("current_secret", "") if old.get("gmail") == gmail else "",
         "history": old.get("history", []),
         "registered_at": old.get("registered_at") or datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -214,9 +232,11 @@ def issue_gmail_alias(user_id: int) -> str:
     if not token:
         raise ValueError("このGmailでは4桁エイリアスをすべて発行済みです。")
     alias = f"{local}+{token}@gmail.com"
+    integration_secret = generate_integration_secret()
     history = list(info.get("history", []))
-    history.append({"alias": alias, "created_at": datetime.now(timezone.utc).isoformat(), "deleted": False})
+    history.append({"alias": alias, "created_at": datetime.now(timezone.utc).isoformat(), "deleted": False, "integration_secret": integration_secret})
     info["current_alias"] = alias
+    info["current_secret"] = integration_secret
     info["history"] = history[-100:]
     info["updated_at"] = datetime.now(timezone.utc).isoformat()
     accounts[key] = info
@@ -236,6 +256,7 @@ def clear_gmail_alias(user_id: int) -> bool:
             if isinstance(item, dict) and item.get("alias") == alias:
                 item["deleted"] = True
     info["current_alias"] = ""
+    info["current_secret"] = ""
     info["updated_at"] = datetime.now(timezone.utc).isoformat()
     accounts[key] = info
     save_accounts(accounts)
@@ -249,6 +270,7 @@ def unregister_gmail(user_id: int) -> bool:
     if existed:
         info = accounts[key]
         info["current_alias"] = ""
+        info["current_secret"] = ""
         info["unregistered_at"] = datetime.now(timezone.utc).isoformat()
         info["gmail"] = ""
         accounts[key] = info
