@@ -14,6 +14,14 @@ from utils import is_allowed
 import paypayu
 from persistent_store import load_json_store, save_json_store
 from mail_service import extract_email_addresses, register_purchase_delivery, remove_purchase_delivery
+from points_service import (
+    award_purchase_points,
+    commit_reserved_points,
+    get_balance,
+    record_purchase,
+    release_reserved_points,
+    reserve_points,
+)
 import random
 import requests
 from bs4 import BeautifulSoup
@@ -1090,14 +1098,22 @@ class VendingMachineCog(commands.Cog):
                 quantity,
                 final_price,
                 self.bot,
-                self.payment_method
+                self.payment_method,
+                0,
             )
             
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    class PurchaseConfirmView(ui.View):
+    class PointUseModal(ui.Modal, title="ポイントを使う"):
+        points_input = ui.TextInput(
+            label="使用ポイント（1ポイント＝1円）",
+            placeholder="例: 100",
+            required=True,
+            max_length=10,
+        )
+
         def __init__(self, vending_machine_id: str, product: dict, quantity: int, final_price: int, bot: commands.Bot, payment_method: str):
-            super().__init__(timeout=300)
+            super().__init__()
             self.vending_machine_id = vending_machine_id
             self.product = product
             self.quantity = quantity
@@ -1105,8 +1121,62 @@ class VendingMachineCog(commands.Cog):
             self.bot = bot
             self.payment_method = payment_method
 
+        async def on_submit(self, interaction: discord.Interaction):
+            try:
+                points_used = int(str(self.points_input.value).strip())
+            except ValueError:
+                return await interaction.response.send_message("使用ポイントには整数を入力してください。", ephemeral=True)
+            balance = get_balance(interaction.user.id)
+            maximum = min(balance, self.final_price)
+            if points_used <= 0 or points_used > maximum:
+                return await interaction.response.send_message(
+                    f"使用できるポイントは1〜{maximum}ポイントです。現在の残高: {balance}ポイント",
+                    ephemeral=True,
+                )
+            new_price = self.final_price - points_used
+            embed = discord.Embed(title="購入確認（ポイント値引き）", color=discord.Color.blue(), timestamp=discord.utils.utcnow())
+            embed.add_field(name="商品名", value=f"```{self.product['name']}```", inline=False)
+            embed.add_field(name="個数", value=f"```{self.quantity}個```", inline=True)
+            embed.add_field(name="ポイント値引き", value=f"```{points_used}円```", inline=True)
+            embed.add_field(name="実際の支払額", value=f"```{new_price}円```", inline=False)
+            embed.set_footer(text="購入確定時にポイントを仮確保し、失敗時は自動返却します")
+            view = VendingMachineCog.PurchaseConfirmView(
+                self.vending_machine_id, self.product, self.quantity, new_price,
+                self.bot, self.payment_method, points_used,
+            )
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    class PurchaseConfirmView(ui.View):
+        def __init__(self, vending_machine_id: str, product: dict, quantity: int, final_price: int, bot: commands.Bot, payment_method: str, points_used: int = 0):
+            super().__init__(timeout=300)
+            self.vending_machine_id = vending_machine_id
+            self.product = product
+            self.quantity = quantity
+            self.final_price = final_price
+            self.bot = bot
+            self.payment_method = payment_method
+            self.points_used = int(points_used)
+            self._processing = False
+
+        @ui.button(label="ポイントを使う", emoji="🎁", style=discord.ButtonStyle.secondary)
+        async def use_points(self, interaction: discord.Interaction, button: ui.Button):
+            if self._processing:
+                return await interaction.response.send_message("現在、購入処理中です。", ephemeral=True)
+            if self.final_price <= 0:
+                return await interaction.response.send_message("この購入はすでに支払額が0円です。", ephemeral=True)
+            balance = get_balance(interaction.user.id)
+            if balance <= 0:
+                return await interaction.response.send_message("使用できるポイントがありません。", ephemeral=True)
+            await interaction.response.send_modal(VendingMachineCog.PointUseModal(
+                self.vending_machine_id, self.product, self.quantity, self.final_price,
+                self.bot, self.payment_method,
+            ))
+
         @ui.button(label="購入確定", style=discord.ButtonStyle.green)
         async def confirm_purchase(self, interaction: discord.Interaction, button: ui.Button):
+            if self._processing:
+                return await interaction.response.send_message("現在、購入処理中です。", ephemeral=True)
+            self._processing = True
             if self.final_price == 0:
                 await self.process_purchase(interaction, None)
             else:
@@ -1116,7 +1186,8 @@ class VendingMachineCog(commands.Cog):
                         self.product,
                         self.quantity,
                         self.final_price,
-                        self.bot
+                        self.bot,
+                        self.points_used,
                     )
                 else:
                     modal = VendingMachineCog.KyashModal(
@@ -1124,13 +1195,16 @@ class VendingMachineCog(commands.Cog):
                         self.product,
                         self.quantity,
                         self.final_price,
-                        self.bot
+                        self.bot,
+                        self.points_used,
                     )
                 await interaction.response.send_modal(modal)
 
         async def process_purchase(self, interaction: discord.Interaction, link: Optional[str]):
             await ensure_deferred(interaction, ephemeral=True)
-            
+            reservation_id = ""
+            reservation_committed = False
+
             try:
                 vending_data = load_json(VENDING_DATA_FILE)
                 vm = vending_data.get(self.vending_machine_id)
@@ -1144,6 +1218,18 @@ class VendingMachineCog(commands.Cog):
                     embed.set_footer(text="developer@_Avel")
                     return await interaction.followup.send(embed=embed, ephemeral=True)
                 
+                if self.points_used > 0:
+                    reservation_id = (
+                        f"points-reserve:{interaction.guild.id}:{interaction.user.id}:"
+                        f"{self.vending_machine_id}:{self.product.get('product_id')}:"
+                        f"{link or uuid.uuid4().hex}"
+                    )
+                    if not reserve_points(interaction.user.id, self.points_used, reservation_id):
+                        return await interaction.followup.send(
+                            "ポイント残高が不足しています。購入確認画面を閉じて、もう一度やり直してください。",
+                            ephemeral=True,
+                        )
+
                 if self.final_price > 0:
                     if self.payment_method == "paypay":
                         paypay_data = load_paypay_data()
@@ -1277,7 +1363,15 @@ class VendingMachineCog(commands.Cog):
                     
                     purchased_content = f"```\n{''.join(purchased_items).strip()}\n```"
                     purchased_content_text = ''.join(purchased_items).strip()
-                
+
+                if reservation_id:
+                    if not commit_reserved_points(reservation_id):
+                        return await interaction.followup.send(
+                            "ポイント値引きの確定に失敗しました。購入を中止しました。",
+                            ephemeral=True,
+                        )
+                    reservation_committed = True
+
                 price_display = "0円" if self.final_price == 0 else f"{self.final_price}円"
                 
                 embed = discord.Embed(
@@ -1318,7 +1412,38 @@ class VendingMachineCog(commands.Cog):
                             vm_ref["products"][i]["sales_count"] = current_sales + self.quantity
                             break
                     save_json(VENDING_DATA_FILE, vending_data)
-                
+
+                # 決済・在庫払い出し・購入完了通知まで到達した購入だけを対象にする。
+                # Sheets側の取引IDで冪等化し、再送や再起動で二重付与しない。
+                try:
+                    purchase_id = (
+                        f"{interaction.guild.id}:{interaction.channel.id}:"
+                        f"{interaction.user.id}:{self.vending_machine_id}:"
+                        f"{self.product.get('product_id')}:"
+                        f"{link or uuid.uuid4().hex}"
+                    )
+                    awarded_balance = award_purchase_points(
+                        interaction.user.id, self.final_price, purchase_id
+                    )
+                    record_purchase(
+                        interaction.user.id,
+                        purchase_id=purchase_id,
+                        guild_id=interaction.guild.id,
+                        product_name=self.product.get("name", "不明"),
+                        quantity=self.quantity,
+                        paid_yen=self.final_price,
+                        points_used=self.points_used,
+                        payment_method=self.payment_method,
+                    )
+                    if self.final_price >= 100:
+                        await interaction.followup.send(
+                            f"🎁 購入ポイントを付与しました。現在の残高: **{awarded_balance}ポイント**",
+                            ephemeral=True,
+                        )
+                except Exception as points_exc:
+                    # 商品の払い出しは成功扱いにし、ポイント障害だけログに残す。
+                    print(f"購入ポイント付与エラー: {type(points_exc).__name__}")
+
                 try:
                     role_data = load_role_assignment_data()
                     role_info = role_data.get(self.vending_machine_id)
@@ -1404,16 +1529,20 @@ class VendingMachineCog(commands.Cog):
                 
             except Exception as e:
                 await handle_error(interaction, e)
+            finally:
+                if reservation_id and not reservation_committed:
+                    release_reserved_points(reservation_id)
 
     class PayPayModal(ui.Modal, title="PayPay決済"):
-        def __init__(self, vending_machine_id: str, product: dict, quantity: int, final_price: int, bot: commands.Bot):
+        def __init__(self, vending_machine_id: str, product: dict, quantity: int, final_price: int, bot: commands.Bot, points_used: int = 0):
             super().__init__()
             self.vending_machine_id = vending_machine_id
             self.product = product
             self.quantity = quantity
             self.final_price = final_price
             self.bot = bot
-            
+            self.points_used = int(points_used)
+
             self.paypay_input = ui.TextInput(
                 label="PayPayリンク", 
                 placeholder="https://pay.paypay.ne.jp/...", 
@@ -1445,14 +1574,15 @@ class VendingMachineCog(commands.Cog):
                 self.quantity, 
                 self.final_price, 
                 self.bot,
-                "paypay"
+                "paypay",
+                self.points_used,
             )
             
             # process_purchase へ渡す
             await confirm_view.process_purchase(interaction, link)
 
     class KyashModal(ui.Modal, title="Kyash決済"):
-        def __init__(self, vending_machine_id: str, product: dict, quantity: int, final_price: int, bot: commands.Bot):
+        def __init__(self, vending_machine_id: str, product: dict, quantity: int, final_price: int, bot: commands.Bot, points_used: int = 0):
             super().__init__()
             self.vending_machine_id = vending_machine_id
             self.product = product
@@ -1460,6 +1590,7 @@ class VendingMachineCog(commands.Cog):
             self.final_price = final_price
             self.bot = bot
             
+            self.points_used = int(points_used)
             self.kyash_input = ui.TextInput(
                 label="Kyashリンク",
                 placeholder="https://kyash.me/payments/...",
@@ -1474,7 +1605,8 @@ class VendingMachineCog(commands.Cog):
                 self.quantity,
                 self.final_price,
                 self.bot,
-                "kyash"
+                "kyash",
+                self.points_used,
             )
             await confirm_view.process_purchase(interaction, self.kyash_input.value)
 
