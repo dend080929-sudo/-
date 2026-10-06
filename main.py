@@ -118,7 +118,8 @@ async def global_interaction_check(interaction: discord.Interaction) -> bool:
         await ensure_deferred(interaction, ephemeral=not is_public_panel)
     return True
 
-bot.tree.interaction_check = global_interaction_check
+# 各コマンド自身が処理開始時に保留応答を行うため、Tree全体での二重保留は行わない。
+# これにより、Discord.pyのコマンドチェックや権限エラー時の応答経路を壊さない。
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
