@@ -137,7 +137,6 @@ async def setup_hook():
     # Google APIをコマンド実行中に待たないよう、有料自販機関連データを起動時に先読みする
     await asyncio.to_thread(preload_json_stores, [
         ("server_config", "server_config.json"),
-        ("vending_items", "free_vending_data.json"),
         ("paid_vending_items", "vending_data.json"),
         ("paid_stock_contents", "stock_contents.json"),
         ("paid_stock_notifications", "stock_notification_data.json"),
@@ -194,11 +193,7 @@ def load_server_config():
 def save_server_config(config):
     save_json_store("server_config", config, "server_config.json")
 
-def load_vending():
-    return load_json_store("vending_items", "free_vending_data.json")
 
-def save_vending(data):
-    save_json_store("vending_items", data, "free_vending_data.json")
 
 def load_data():
     client = get_gspread_client()
@@ -278,29 +273,6 @@ def has_admin_role(member: discord.Member) -> bool:
     if admin_role_id != 0 and any(role.id == admin_role_id for role in member.roles):
         return True
     return False
-
-# -------------------------------------------------------------
-# 👑 実績チャンネルのカウント自動更新関数
-# -------------------------------------------------------------
-async def update_achievement_channel_name(guild: discord.Guild):
-    cfg = load_server_config()
-    log_channel_id = cfg.get("log_channel_id", 0)
-    if log_channel_id == 0:
-        return
-    log_channel = guild.get_channel(log_channel_id)
-    if not log_channel:
-        return
-    
-    try:
-        count = 0
-        async for _ in log_channel.history(limit=None):
-            count += 1
-        
-        new_name = f"👑｜実績ー{count}"
-        if log_channel.name != new_name:
-            await log_channel.edit(name=new_name)
-    except Exception as e:
-        print(f"チャンネル名更新エラー: {e}")
 
 # -------------------------------------------------------------
 # 📢 定期送信機能
@@ -522,191 +494,6 @@ class TicketView(discord.ui.View):
         await channel.send(content=mention_string, embed=embed, view=close_view)
         await interaction.response.send_message(f"✅ チケットを作成しました！ 👉 {channel.mention}", ephemeral=True)
 
-# -------------------------------------------------------------
-# 3. 自販機システム（金額なし・在庫ID表示・エラー対策版）
-# -------------------------------------------------------------
-class ItemAddModal(discord.ui.Modal):
-    def __init__(self, machine_name: str):
-        super().__init__(title=f"自販機追加: {machine_name}")
-        self.machine_name = machine_name
-
-    item_name = discord.ui.TextInput(label="商品名", placeholder="例: 自動代行ソースコード", max_length=100)
-    item_stock = discord.ui.TextInput(label="在庫数（半角数字 または ∞）", placeholder="例: 5 または ∞", max_length=10, default="∞")
-    item_desc = discord.ui.TextInput(label="商品説明（誰でも見えます）", style=discord.TextStyle.paragraph, placeholder="例: 自動代行ソースコードです。", max_length=500)
-    item_content = discord.ui.TextInput(label="商品の中身（購入者にだけ送られます）", style=discord.TextStyle.paragraph, placeholder="例: GoogleドライブのURLやシリアルコード", max_length=1000)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
-            await ensure_deferred(interaction, ephemeral=True)
-
-        if not has_admin_role(interaction.user):
-            await interaction.followup.send("❌ 権限がありません。", ephemeral=True)
-            return
-
-        stock_val = self.item_stock.value.strip()
-        if stock_val in ["∞", "inf", "Infinity", "infinity"]:
-            stock = 99
-        else:
-            try:
-                stock = int(stock_val)
-            except ValueError:
-                await interaction.followup.send("❌ 在庫数は数字または「∞」で入力してください。", ephemeral=True)
-                return
-
-        data = load_vending()
-        if self.machine_name not in data:
-            data[self.machine_name] = {}
-        
-        machine_items = data[self.machine_name]
-        new_id = str(max([int(k) for k in machine_items.keys()] + [0]) + 1)
-        
-        machine_items[new_id] = {
-            "name": self.item_name.value,
-            "desc": self.item_desc.value,
-            "content": self.item_content.value,
-            "stock": stock,
-            "sold": 0
-        }
-        save_vending(data)
-        
-        await interaction.followup.send(f"✅ 自販機「**{self.machine_name}**」に商品を追加しました！ (ID: `{new_id}`)", ephemeral=True)
-
-class PurchaseConfirmView(discord.ui.View):
-    def __init__(self, machine_name: str, item_id: str, item_data: dict):
-        super().__init__(timeout=180)
-        self.machine_name = machine_name
-        self.item_id = item_id
-        self.item_data = item_data
-
-    @discord.ui.button(label="購入確定", style=discord.ButtonStyle.green, custom_id="confirm_purchase_btn")
-    async def confirm_purchase(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await ensure_deferred(interaction, ephemeral=True)
-
-        data = load_vending()
-        if self.machine_name not in data or self.item_id not in data[self.machine_name]:
-            await interaction.followup.send("❌ この商品は存在しません。", ephemeral=True)
-            return
-
-        item = data[self.machine_name][self.item_id]
-        current_stock = item.get("stock", 99)
-        if current_stock != 99 and current_stock <= 0:
-            await interaction.followup.send("❌ 申し訳ありません。この商品は売り切れ（在庫切れ）です。", ephemeral=True)
-            return
-
-        item["sold"] += 1
-        if current_stock != 99:
-            item["stock"] -= 1
-        save_vending(data)
-
-        secret_content = item.get('content', '（中身が設定されていません）')
-        
-        embed = discord.Embed(
-            title="✅ 購入（受取）が完了しました！",
-            description=f"自販機: **{self.machine_name}**\n商品: **{item['name']}**",
-            color=0x00ff00
-        )
-        embed.add_field(name="📦 あなたの商品の中身", value=secret_content, inline=False)
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-        cfg = load_server_config()
-        log_channel_id = cfg.get("log_channel_id", 0)
-        if log_channel_id != 0:
-            log_channel = interaction.guild.get_channel(log_channel_id)
-            if log_channel:
-                log_embed = discord.Embed(
-                    title="🎉 取引実績・受取通知",
-                    description=f"**自販機**: {self.machine_name}\n**購入者**: {interaction.user.mention}\n**商品名**: {item['name']}",
-                    color=0x3498DB,
-                    timestamp=datetime.now()
-                )
-                await log_channel.send(embed=log_embed)
-                await update_achievement_channel_name(interaction.guild)
-
-class VendingSelect(discord.ui.Select):
-    def __init__(self, machine_name: str):
-        self.machine_name = machine_name
-        data = load_vending()
-        items = data.get(machine_name, {})
-        options = []
-        if not items:
-            options.append(discord.SelectOption(label="商品がありません", value="none"))
-        else:
-            for item_id, info in items.items():
-                stock_val = info.get('stock', 99)
-                stock_str = "∞" if stock_val == 99 else str(stock_val)
-                options.append(discord.SelectOption(
-                    label=info["name"][:25],
-                    value=item_id,
-                    description=f"在庫: {stock_str}個"
-                ))
-        super().__init__(placeholder="商品を選択してください", min_values=1, max_values=1, options=options, custom_id=f"vending_select_{machine_name}")
-
-    async def callback(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
-            await ensure_deferred(interaction, ephemeral=True)
-
-        if self.values[0] == "none":
-            await interaction.followup.send("❌ 商品がありません。", ephemeral=True)
-            return
-
-        data = load_vending()
-        items = data.get(self.machine_name, {})
-        item_id = self.values[0]
-        if item_id in items:
-            item = items[item_id]
-            stock_val = item.get('stock', 99)
-            if stock_val != 99 and stock_val <= 0:
-                await interaction.followup.send("❌ この商品は現在売り切れです。", ephemeral=True)
-                return
-
-            embed = discord.Embed(title=f"購入確認 ({self.machine_name})", color=0x2b2d31)
-            embed.add_field(name="商品名", value=item["name"], inline=False)
-            embed.add_field(name="商品説明", value=item["desc"], inline=False)
-            view = PurchaseConfirmView(self.machine_name, item_id, item)
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-
-class VendingMainView(discord.ui.View):
-    def __init__(self, machine_name: str):
-        super().__init__(timeout=None)
-        self.machine_name = machine_name
-
-    @discord.ui.button(label="🛒 購入する", style=discord.ButtonStyle.green, custom_id="vending_buy_main_btn")
-    async def buy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await ensure_deferred(interaction, ephemeral=True)
-        view = discord.ui.View()
-        view.add_item(VendingSelect(self.machine_name))
-        await interaction.followup.send("セレクトメニューから商品を選択してください。", view=view, ephemeral=True)
-
-    @discord.ui.button(label="🔍 在庫・販売数の確認", style=discord.ButtonStyle.blurple, custom_id="vending_stock_main_btn")
-    async def stock_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.response.is_done():
-            await ensure_deferred(interaction, ephemeral=True)
-        
-        data = load_vending()
-        items = data.get(self.machine_name, {})
-        embed = discord.Embed(title=f"📦 在庫・販売数チェッカー ({self.machine_name})", color=0x3498DB)
-        if not items:
-            embed.description = "現在登録されている商品はありません。"
-        else:
-            for i_id, info in items.items():
-                stock_val = info.get('stock', 99)
-                stock_str = "∞" if stock_val == 99 else str(stock_val)
-                field_title = f"[ID: {i_id}] {info['name']}"
-                field_value = f"在庫: {stock_str}個 | 販売数: {info.get('sold', 0)}個"
-                embed.add_field(name=field_title, value=field_value, inline=False)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="➕ 商品を追加する", style=discord.ButtonStyle.gray, custom_id="vending_add_modal_btn")
-    async def add_item_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_admin_role(interaction.user):
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ 管理者権限が必要です。", ephemeral=True)
-            return
-        await interaction.response.send_modal(ItemAddModal(self.machine_name))
-
 class VerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -747,12 +534,7 @@ async def on_ready():
     bot.add_view(TicketCloseView())
     bot.add_view(VerifyView())
     
-    vending_data = load_vending()
-    for machine_name in vending_data.keys():
-        bot.add_view(VendingMainView(machine_name))
     
-    for guild in bot.guilds:
-        await update_achievement_channel_name(guild)
 
 # -------------------------------------------------------------
 # スラッシュコマンド一覧（完全網羅）
@@ -924,123 +706,6 @@ async def clear_announcement(interaction: discord.Interaction):
     save_announce_config(default_config)
     await interaction.followup.send("✅ 定期お知らせの設定を消去し、自動送信を停止しました。", ephemeral=True)
 
-@bot.tree.command(name="簡易自販機設置", description="自販機パネルを送信します（既存の保存済み自販機から選択、または新規作成可能）。")
-@app_commands.describe(machine_name="新しく作成する場合の自販機名（既存から選ぶ場合は空欄でもOK）")
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_vending(interaction: discord.Interaction, machine_name: str = None):
-    await ensure_deferred(interaction, ephemeral=True)
-    if not has_admin_role(interaction.user):
-        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
-        return
-    
-    data = load_vending()
-
-    if machine_name:
-        if machine_name not in data:
-            data[machine_name] = {}
-            save_vending(data)
-
-        items = data[machine_name]
-        vending_embed = discord.Embed(title=f"🎪 自販機: {machine_name}", description="以下のメニューまたはボタンから商品をご利用いただけます。", color=0x2b2d31)
-        if not items:
-            vending_embed.add_field(name="お知らせ", value="現在登録されている商品はございません。", inline=False)
-        else:
-            for i_id, info in items.items():
-                field_value = f"商品説明: {info.get('desc', 'なし')}"
-                vending_embed.add_field(name=info["name"], value=field_value, inline=False)
-                
-        await interaction.channel.send(embed=vending_embed, view=VendingMainView(machine_name))
-        await interaction.followup.send(f"✅ 自販機パネル（識別名: **{machine_name}**）を設置しました！", ephemeral=True)
-        return
-
-    if not data:
-        await interaction.followup.send("❌ 保存されている自販機がありません。コマンドの引数に新しい自販機名を入力して作成してください。(例: `/簡易自販機設置 machine_name:メイン自販機`)", ephemeral=True)
-        return
-
-    class VendingMachineSelectView(discord.ui.View):
-        def __init__(self):
-            super().__init__(timeout=60)
-            options = []
-            for name in data.keys():
-                options.append(discord.SelectOption(label=name[:25], value=name, description=f"登録商品数: {len(data[name])}個"))
-            
-            select = discord.ui.Select(placeholder="設置する自販機を選択してください", min_values=1, max_values=1, options=options)
-            
-            async def select_callback(select_interaction: discord.Interaction):
-                selected_name = select.values[0]
-                if not select_interaction.response.is_done():
-                    await select_interaction.response.defer(ephemeral=True)
-
-                items = data.get(selected_name, {})
-                vending_embed = discord.Embed(title=f"🎪 自販機: {selected_name}", description="以下のメニューまたはボタンから商品をご利用いただけます。", color=0x2b2d31)
-                if not items:
-                    vending_embed.add_field(name="お知らせ", value="現在登録されている商品はございません。", inline=False)
-                else:
-                    for i_id, info in items.items():
-                        field_value = f"商品説明: {info.get('desc', 'なし')}"
-                        vending_embed.add_field(name=info["name"], value=field_value, inline=False)
-                        
-                await select_interaction.channel.send(embed=vending_embed, view=VendingMainView(selected_name))
-                await select_interaction.followup.send(f"✅ 保存済み自販機「**{selected_name}**」のパネルを設置しました！", ephemeral=True)
-
-            select.callback = select_callback
-            self.add_item(select)
-
-    await interaction.followup.send("👇 設置したい保存済みの自販機を選択してください：", view=VendingMachineSelectView(), ephemeral=True)
-
-@bot.tree.command(name="簡易自販機一覧", description="指定した自販機の登録商品一覧を確認します。")
-@app_commands.describe(machine_name="確認したい自販機の名前")
-@app_commands.checks.has_permissions(administrator=True)
-async def vending_list(interaction: discord.Interaction, machine_name: str):
-    await ensure_deferred(interaction, ephemeral=True)
-    if not has_admin_role(interaction.user):
-        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
-        return
-    data = load_vending()
-    items = data.get(machine_name, {})
-    embed = discord.Embed(title=f"🎪 登録商品一覧 ({machine_name})", color=0x3498DB)
-    if not items:
-        embed.description = "この自販機には商品が登録されていません。"
-    for i_id, info in items.items():
-        stock_val = info.get('stock', 99)
-        stock_str = "∞" if stock_val == 99 else str(stock_val)
-        embed.add_field(name=f"ID: {i_id}", value=f"商品名: {info['name']} | 在庫: {stock_str}個", inline=False)
-    await interaction.followup.send(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="簡易商品削除", description="指定した自販機から特定の商品を削除します。")
-@app_commands.describe(machine_name="対象の自販機名", item_id="削除する商品のID (例: 1)")
-@app_commands.checks.has_permissions(administrator=True)
-async def vending_delete(interaction: discord.Interaction, machine_name: str, item_id: str):
-    await ensure_deferred(interaction, ephemeral=True)
-    if not has_admin_role(interaction.user):
-        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
-        return
-    data = load_vending()
-    if machine_name in data and item_id in data[machine_name]:
-        deleted_name = data[machine_name][item_id]["name"]
-        del data[machine_name][item_id]
-        save_vending(data)
-        await interaction.followup.send(f"✅ 自販機「{machine_name}」の商品「{deleted_name}」(ID: {item_id}) を削除しました！", ephemeral=True)
-    else:
-        await interaction.followup.send(f"❌ 指定された自販機名または商品IDが見つかりませんでした。", ephemeral=True)
-
-@bot.tree.command(name="簡易自販機削除", description="指定した自販機自体（登録されている全商品データ含む）を削除します。")
-@app_commands.describe(machine_name="削除したい自販機の名前")
-@app_commands.checks.has_permissions(administrator=True)
-async def vending_machine_delete(interaction: discord.Interaction, machine_name: str):
-    await ensure_deferred(interaction, ephemeral=True)
-    if not has_admin_role(interaction.user):
-        await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
-        return
-    
-    data = load_vending()
-    if machine_name in data:
-        del data[machine_name]
-        save_vending(data)
-        await interaction.followup.send(f"🗑️ 自販機「**{machine_name}**」をデータごと完全に削除しました。", ephemeral=True)
-    else:
-        await interaction.followup.send(f"❌ 指定された自販機名「{machine_name}」が見つかりませんでした。", ephemeral=True)
-
 @bot.tree.command(name="バックアップ", description="メンバーバックアップを手動で強制実行し、登録人数を表示します。")
 @app_commands.checks.has_permissions(administrator=True)
 async def backup_command(interaction: discord.Interaction):
@@ -1128,7 +793,6 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="⚙️ サーバー設定", value="`/設定` - ロールやログチャンネルを設定・確認します。", inline=False)
     embed.add_field(name="🎫 チケット機能", value="`/チケット設置` - お問い合わせ用チケット作成パネルを送信します。", inline=False)
     embed.add_field(name="✅ 認証機能", value="`/認証設置` - 認証＆ロール付与パネルを送信します。\n※認証時にスプレッドシートへデータが永続化されます。", inline=False)
-    embed.add_field(name="🎪 無料・簡易自販機機能", value="`/簡易自販機設置` - 簡易自販機パネルを設置します。\n`/簡易自販機一覧` - 登録商品一覧の確認\n`/簡易商品削除` - 商品の削除\n`/簡易自販機削除` - 自販機自体の削除", inline=False)
     embed.add_field(name="💰 有料自販機機能（PayPay・Kyash）", value="`/有料自販機作成` - 有料自販機を作成\n`/有料商品追加` - 価格付きの商品を追加\n`/有料自販機設置` - 有料自販機を設置\n`/有料在庫追加` - 在庫を追加\n`/有料商品情報変更` - PayPay価格・Kyash価格を変更\n`/有料自販機パネル更新` - パネルを更新\n`/有料在庫引出` - 在庫を引き出す\n`/有料在庫内容確認` - 在庫を確認\n`/有料商品削除` - 商品を削除\n`/有料自販機削除` - 有料自販機を削除\n`/有料公開ログ設定`・`/有料購入ログ設定`・`/有料非公開ログ設定` - 購入ログ設定\n`/有料自販機クーポン作成`・`/有料自販機クーポン削除`・`/有料自販機クーポン一覧` - クーポン管理", inline=False)
     embed.add_field(name="💳 決済アカウント", value="`/ペイペイログイン` - PayPayを登録\n`/ペイペイログアウト` - PayPay情報を削除\n`/ペイペイプロキシ設定` - 通信設定\n`/キャッシュログイン` - Kyashログインを開始\n`/キャッシュ認証` - Kyashの認証コードを入力", inline=False)
     embed.add_field(name="📢 定期お知らせ", value="`/お知らせ設定` - 定期お知らせを設定します。\n`/お知らせ確認` - 設定状況を確認します。\n`/お知らせテスト` - テスト送信をします。\n`/お知らせ解除` - 設定を消去して停止します。", inline=False)
