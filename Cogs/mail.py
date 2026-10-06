@@ -9,6 +9,7 @@ from mail_service import (
     clear_gmail_alias,
     delete_received_messages,
     get_current_address,
+    get_current_address_secret,
     get_gmail_info,
     hide_current_address,
     issue_address,
@@ -53,6 +54,122 @@ class MailPanelView(discord.ui.View):
         self.add_item(GmailIssueButton())
         self.add_item(GmailDeleteButton())
         self.add_item(GmailUnregisterButton())
+        self.add_item(IntegrationInfoButton())
+        self.add_item(AddMailToVendingButton())
+
+
+class MailStockCredentialView(discord.ui.View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=180)
+        self.add_item(MailStockCredentialSelect(user_id))
+
+
+class MailStockCredentialSelect(discord.ui.Select):
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+        options = []
+        address = get_current_address(user_id)
+        if address and get_current_address_secret(user_id):
+            options.append(discord.SelectOption(label="通常メールアドレス", description=address[:100], value="address"))
+        gmail = get_gmail_info(user_id)
+        if gmail.get("current_alias") and gmail.get("current_secret"):
+            options.append(discord.SelectOption(label="Gmailエイリアス", description=str(gmail["current_alias"])[:100], value="alias"))
+        if not options:
+            options.append(discord.SelectOption(label="発行済みの連携情報がありません", value="none"))
+        super().__init__(placeholder="追加するメール情報を選択", options=options, custom_id="mail_stock_credential_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("管理者権限が必要です。", ephemeral=True)
+        if self.values[0] == "none":
+            return await interaction.response.send_message("先にメールアドレスまたはGmailエイリアスを発行してください。", ephemeral=True)
+        await interaction.response.send_message("追加先の有料自販機を選択してください。", view=MailStockMachineView(self.user_id, self.values[0]), ephemeral=True)
+
+
+class MailStockMachineView(discord.ui.View):
+    def __init__(self, user_id: int, credential_type: str):
+        super().__init__(timeout=180)
+        from Cogs.vending import load_json
+        data = load_json("vending_data.json")
+        options = [discord.SelectOption(label=str(vm.get("name", vm_id))[:100], value=str(vm_id)) for vm_id, vm in data.items() if isinstance(vm, dict)]
+        if not options:
+            options = [discord.SelectOption(label="有料自販機がありません", value="none")]
+        self.add_item(MailStockMachineSelect(user_id, credential_type, options))
+
+
+class MailStockMachineSelect(discord.ui.Select):
+    def __init__(self, user_id: int, credential_type: str, options: list[discord.SelectOption]):
+        self.user_id = user_id
+        self.credential_type = credential_type
+        super().__init__(placeholder="自販機を選択", options=options, custom_id="mail_stock_machine_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none":
+            return await interaction.response.send_message("有料自販機がありません。", ephemeral=True)
+        await interaction.response.send_message(
+            "追加先の商品を選択してください。",
+            view=MailStockProductView(self.user_id, self.credential_type, self.values[0]),
+            ephemeral=True,
+        )
+
+
+class MailStockProductView(discord.ui.View):
+    def __init__(self, user_id: int, credential_type: str, vending_machine_id: str):
+        super().__init__(timeout=180)
+        from Cogs.vending import load_json
+        data = load_json("vending_data.json")
+        products = data.get(vending_machine_id, {}).get("products", [])
+        options = [discord.SelectOption(label=str(p.get("name", "商品"))[:100], value=str(p.get("product_id"))) for p in products if not p.get("infinite_stock") and p.get("stock_file")]
+        if not options:
+            options = [discord.SelectOption(label="追加可能な商品がありません", value="none")]
+        self.add_item(MailStockProductSelect(user_id, credential_type, vending_machine_id, options))
+
+
+class MailStockProductSelect(discord.ui.Select):
+    def __init__(self, user_id: int, credential_type: str, vending_machine_id: str, options: list[discord.SelectOption]):
+        self.user_id = user_id
+        self.credential_type = credential_type
+        self.vending_machine_id = vending_machine_id
+        super().__init__(placeholder="商品を選択", options=options, custom_id="mail_stock_product_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none":
+            return await interaction.response.send_message("追加可能な商品がありません。", ephemeral=True)
+        from Cogs.vending import append_stock_content, load_json
+        data = load_json("vending_data.json")
+        product = next((p for p in data.get(self.vending_machine_id, {}).get("products", []) if str(p.get("product_id")) == self.values[0]), None)
+        if not product or not product.get("stock_file") or product.get("infinite_stock"):
+            return await interaction.response.send_message("この商品には在庫を追加できません。", ephemeral=True)
+        if self.credential_type == "address":
+            address = get_current_address(self.user_id)
+            secret = get_current_address_secret(self.user_id)
+            label = "メールアドレス"
+        else:
+            gmail = get_gmail_info(self.user_id)
+            address = gmail.get("current_alias")
+            secret = gmail.get("current_secret")
+            label = "Gmailエイリアス"
+        if not address or not secret:
+            return await interaction.response.send_message("選択した連携情報が見つかりません。", ephemeral=True)
+        append_stock_content(product["stock_file"], [f"{label}: {address} | パスワード: {secret}"])
+        await interaction.response.send_message(
+            f"✅ `{product.get('name', '商品')}`の在庫に1件追加しました。\n追加内容: `{address}`",
+            ephemeral=True,
+        )
+
+
+class AddMailToVendingButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="自販機在庫に追加", style=discord.ButtonStyle.success, custom_id="mail_stock_add_button", row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("管理者権限が必要です。", ephemeral=True)
+        await interaction.response.send_message(
+            "自販機へ追加するメール情報を選択してください。",
+            view=MailStockCredentialView(interaction.user.id),
+            ephemeral=True,
+        )
 
 
 class MailIssueButton(discord.ui.Button):
@@ -64,7 +181,13 @@ class MailIssueButton(discord.ui.Button):
         try:
             address = issue_address(interaction.user.id)
             await refresh_panel(interaction)
-            await interaction.followup.send(f"メールアドレスを発行しました: `{address}`", ephemeral=True)
+            secret = get_current_address_secret(interaction.user.id)
+            await interaction.followup.send(
+                f"メールアドレスを発行しました: `{address}`\n"
+                f"連携用文字列: `{secret}`\n"
+                "この文字列は連携時のパスワード等に使用できます。",
+                ephemeral=True,
+            )
         except Exception as exc:
             await interaction.followup.send(f"発行に失敗しました: {exc}", ephemeral=True)
 
@@ -116,6 +239,28 @@ class GmailRegisterModal(discord.ui.Modal, title="Gmailを登録"):
             await interaction.followup.send(f"Gmail登録に失敗しました: {exc}", ephemeral=True)
 
 
+class IntegrationInfoButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="連携情報を表示", style=discord.ButtonStyle.secondary, custom_id="mail_integration_info_button", row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        await ensure_deferred(interaction, ephemeral=True)
+        address = get_current_address(interaction.user.id)
+        address_secret = get_current_address_secret(interaction.user.id)
+        gmail = get_gmail_info(interaction.user.id)
+        lines = []
+        if address and address_secret:
+            lines.append(f"メールアドレス: `{address}`\n連携用文字列: `{address_secret}`")
+        if gmail.get("current_alias") and gmail.get("current_secret"):
+            lines.append(f"Gmailエイリアス: `{gmail['current_alias']}`\n連携用文字列: `{gmail['current_secret']}`")
+        if not lines:
+            return await interaction.followup.send("発行済みのメールアドレスまたはGmailエイリアスがありません。", ephemeral=True)
+        await interaction.followup.send(
+            "\n\n".join(lines) + "\n\nこの情報は本人にだけ表示されています。",
+            ephemeral=True,
+        )
+
+
 class GmailRegisterButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="Gmail登録", style=discord.ButtonStyle.success, custom_id="gmail_register_button", row=1)
@@ -133,7 +278,13 @@ class GmailIssueButton(discord.ui.Button):
         try:
             alias = issue_gmail_alias(interaction.user.id)
             await refresh_panel(interaction)
-            await interaction.followup.send(f"Gmailエイリアスを発行しました: `{alias}`", ephemeral=True)
+            gmail_info = get_gmail_info(interaction.user.id)
+            await interaction.followup.send(
+                f"Gmailエイリアスを発行しました: `{alias}`\n"
+                f"連携用文字列: `{gmail_info.get('current_secret') or '発行情報を再取得してください'}`\n"
+                "この文字列は連携時のパスワード等に使用できます。",
+                ephemeral=True,
+            )
         except Exception as exc:
             await interaction.followup.send(f"エイリアス発行に失敗しました: {exc}", ephemeral=True)
 
