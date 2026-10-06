@@ -432,7 +432,8 @@ class TicketCloseView(discord.ui.View):
 
     @discord.ui.button(label="🔒 チケットを閉じる", style=discord.ButtonStyle.red, custom_id="close_ticket_btn")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🔒 このチャンネルをまもなく削除します...", ephemeral=True)
+        await ensure_deferred(interaction, ephemeral=True)
+        await interaction.followup.send("🔒 このチャンネルをまもなく削除します...", ephemeral=True)
         await interaction.channel.delete()
 
 class TicketView(discord.ui.View):
@@ -441,6 +442,7 @@ class TicketView(discord.ui.View):
 
     @discord.ui.button(label="🎫 チケットを作成する", style=discord.ButtonStyle.green, custom_id="create_ticket_btn")
     async def create_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await ensure_deferred(interaction, ephemeral=True)
         guild = interaction.guild
         category = discord.utils.get(guild.categories, name="【チケット窓口】")
         if not category:
@@ -468,7 +470,7 @@ class TicketView(discord.ui.View):
         existing_channel = discord.utils.get(category.text_channels, name=channel_name)
         
         if existing_channel:
-            await interaction.response.send_message(f"❌ すでにオープンしているチケットがあります: {existing_channel.mention}", ephemeral=True)
+            await interaction.followup.send(f"❌ すでにオープンしているチケットがあります: {existing_channel.mention}", ephemeral=True)
             return
 
         channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
@@ -492,7 +494,7 @@ class TicketView(discord.ui.View):
         embed.add_field(name="📌 ご利用の流れ", value="1. スタッフからの案内に従う\n2. 詳細を伝える", inline=False)
         
         await channel.send(content=mention_string, embed=embed, view=close_view)
-        await interaction.response.send_message(f"✅ チケットを作成しました！ 👉 {channel.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ チケットを作成しました！ 👉 {channel.mention}", ephemeral=True)
 
 class VerifyView(discord.ui.View):
     def __init__(self):
