@@ -10,6 +10,8 @@ __pycache__
 **/.env
 **/.env.*
 bot_config.json
+# Render Secret Files are copied into the build context root.
+tsum_settings.json
 tsum_bundle/tsum_settings.json
 tsum_bundle/*.log
 tsum_bundle/device_id.json
