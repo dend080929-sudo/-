@@ -1362,6 +1362,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 TSUM_COMMAND_NAMES = set()
+TSUM_PUBLIC_COMMANDS = {"ツムツムヘルプ"}
 try:
     from tsum_bot_context import bot as _injected_bot
 except ImportError:
@@ -1416,7 +1417,9 @@ class TsumBot(commands.Bot):
                     continue
                 try:
                     _c.guild_only = True
-                    _c.default_permissions = _admin_default
+                    _c.default_permissions = (
+                        None if _root_name in TSUM_PUBLIC_COMMANDS else _admin_default
+                    )
                 except Exception:
                     pass
             if not INTEGRATED_WITH_EXISTING_BOT:
@@ -5053,6 +5056,51 @@ async def slash_rental_price(interaction: discord.Interaction, 月数: int, 料�
     else:
         lines.append("・なし（販売停止中）")
     await interaction.followup.send("\n".join(lines) + _panel_updated_note(done), ephemeral=True)
+
+
+@bot.tree.command(name="ツムツムヘルプ", description="ツムツム機能の説明とコマンド一覧を表示します")
+async def slash_tsum_help(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="ツムツム機能ヘルプ",
+        description=(
+            "ツムツム代行機能で使えるスラッシュコマンドです。\n"
+            "利用できる操作は、サーバーの権限や貸し出し設定によって異なります。"
+        ),
+        color=0x3498DB,
+    )
+    commands_for_help = sorted(
+        (
+            command for command in bot.tree.get_commands()
+            if command.name in TSUM_COMMAND_NAMES and command.name != "ツムツムヘルプ"
+        ),
+        key=lambda command: command.name,
+    )
+    lines = [
+        f"`/{command.name}` — {command.description or 'コマンドを選択して詳細を確認してください。'}"
+        for command in commands_for_help
+    ]
+    chunks = []
+    current = []
+    current_length = 0
+    for line in lines:
+        if current and current_length + len(line) + 1 > 950:
+            chunks.append("\n".join(current))
+            current = []
+            current_length = 0
+        current.append(line)
+        current_length += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
+    if not chunks:
+        chunks.append("コマンド情報を読み込めませんでした。時間をおいて再度お試しください。")
+    for index, chunk in enumerate(chunks):
+        embed.add_field(
+            name="コマンド一覧" if index == 0 else "コマンド一覧（続き）",
+            value=chunk,
+            inline=False,
+        )
+    embed.set_footer(text="コマンドを選ぶと、必要な入力項目や選択肢が表示されます。")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="コマンド一覧", description="このサーバーで使えるコマンドの一覧を表示します")

@@ -129,7 +129,8 @@ async def attach_tsum_bot(shared_bot) -> None:
     previous_check = shared_bot.tree.interaction_check
 
     async def combined_interaction_check(interaction):
-        if _command_root(interaction) in tsum_names:
+        root_name = _command_root(interaction)
+        if root_name in tsum_names and root_name not in tsum_module.TSUM_PUBLIC_COMMANDS:
             return await tsum_module._tree_admin_only(interaction)
         return await previous_check(interaction)
 
