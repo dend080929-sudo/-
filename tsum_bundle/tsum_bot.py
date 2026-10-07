@@ -1441,6 +1441,8 @@ def _discord_proxy_url():
     TSUM_DISCORD_PROXY)のみを見る。他プロジェクトの設定とは無関係に完全に独立させてある。
     PayPay はここに一切関与しない。"""
     env = os.environ.get("TSUM_DISCORD_PROXY", "").strip()
+    if env.lower() in {"direct", "none", "off", "disabled"}:
+        return None
     url = env
     if not url:
         if not CONFIG.get("tor_enabled"):
@@ -1461,9 +1463,14 @@ print(f"[bot] Discord接続プロキシ: {_DISCORD_PROXY or '(未設定・直接
 
 # 起動時に決めたプロキシ設定(監視タスクが参照する)。
 # 環境変数/設定ファイルの値であって、「今使っているか」とは別。
-_DISCORD_PROXY_CONFIGURED = (os.environ.get("TSUM_DISCORD_PROXY", "").strip()
-                             or (str(CONFIG.get("discord_proxy_url") or "").strip()
-                                 if CONFIG.get("tor_enabled") else ""))
+_DISCORD_PROXY_OVERRIDE = os.environ.get("TSUM_DISCORD_PROXY", "").strip()
+_DISCORD_PROXY_CONFIGURED = (
+    ""
+    if _DISCORD_PROXY_OVERRIDE.lower() in {"direct", "none", "off", "disabled"}
+    else _DISCORD_PROXY_OVERRIDE
+    or (str(CONFIG.get("discord_proxy_url") or "").strip()
+        if CONFIG.get("tor_enabled") else "")
+)
 DISCORD_PROXY_CHECK_SEC = 20
 
 

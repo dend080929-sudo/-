@@ -161,7 +161,7 @@ npx wrangler deploy
 
 `tsum_bundle/tsum_settings.example.json`を元に設定ファイルを作成します。ローカルでは同じフォルダ内の`tsum_bundle/tsum_settings.json`、RenderではSecret File`/etc/secrets/tsum_settings.json`として配置し、次を設定します。
 
-`allowed_user_ids`にはツムツム管理者のDiscordユーザーIDを配列で指定します。スラッシュコマンドの即時同期先は、既存Botと共通の環境変数`DISCORD_GUILD_ID`で指定します（未設定の場合はグローバル同期となり、反映まで時間がかかることがあります）。`tor_enabled`が`true`の場合は起動時にLinux版Torを使い、不要なら`false`にします。Discord Botトークンはこのファイルへ書かず、既存Botと同じ`DISCORD_BOT_TOKEN`へ設定してください。
+`allowed_user_ids`にはツムツム管理者のDiscordユーザーIDを配列で指定します。スラッシュコマンドの即時同期先は、既存Botと共通の環境変数`DISCORD_GUILD_ID`で指定します（未設定の場合はグローバル同期となり、反映まで時間がかかることがあります）。`tor_enabled`が`true`の場合は起動時にLinux版Torを使い、不要なら`false`にします。RenderでTorを使うゲーム通信のプロキシURLは`socks5h://127.0.0.1:9050`です。Discord通信を直接接続にする場合、環境変数`TSUM_DISCORD_PROXY=direct`を指定できます。TorのSOCKSポートに`http://127.0.0.1:9050`を設定しないでください。Discord Botトークンはこのファイルへ書かず、既存Botと同じ`DISCORD_BOT_TOKEN`へ設定してください。
 
 Renderでは **New → Web Service → Docker** を選びます。Environment Variablesに既存Bot用の`DISCORD_BOT_TOKEN`等を設定し、ツムツムの設定をSecret File `/etc/secrets/tsum_settings.json`として追加します。`TSUM_BOT_CONFIG=/etc/secrets/tsum_settings.json`を設定し、Health Check Pathは`/healthz`にします。`PORT`はRenderが自動設定し、既存のFlaskサーバーが`0.0.0.0:$PORT`で待ち受けます。
 
