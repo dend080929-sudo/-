@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import os
+import base64
 import secrets
 import string
 import threading
@@ -9,10 +11,49 @@ from datetime import datetime, timezone
 
 from persistent_store import load_json_store, save_json_store
 
+try:
+    from cryptography.fernet import Fernet, InvalidToken
+except ImportError:  # pragma: no cover - requirements.txt includes cryptography
+    Fernet = None
+    InvalidToken = Exception
+
 
 POINTS_SHEET = "points_and_referrals"
 POINTS_FILE = "points_and_referrals.json"
 _LOCK = threading.RLock()
+
+
+def _payout_cipher():
+    """既存のサーバー秘密値から払い出し記録用の暗号鍵を安定生成する。"""
+    if Fernet is None:
+        return None
+    secret = (
+        os.environ.get("FLASK_SECRET_KEY")
+        or os.environ.get("DISCORD_BOT_TOKEN")
+        or os.environ.get("DISCORD_CLIENT_SECRET")
+    )
+    if not secret:
+        return None
+    import hashlib
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def encrypt_payout_content(content: str) -> str:
+    cipher = _payout_cipher()
+    if not cipher or not content:
+        return ""
+    return cipher.encrypt(content.encode("utf-8")).decode("ascii")
+
+
+def decrypt_payout_content(ciphertext: str) -> str:
+    cipher = _payout_cipher()
+    if not cipher or not ciphertext:
+        return ""
+    try:
+        return cipher.decrypt(ciphertext.encode("ascii")).decode("utf-8")
+    except (InvalidToken, ValueError, UnicodeError):
+        return ""
 
 # 環境変数を増やさず、必要なら管理者コマンドで変更できる初期値。
 DEFAULT_CONFIG = {
@@ -193,7 +234,8 @@ def release_reserved_points(reservation_id: str) -> bool:
 
 def record_purchase(user_id: int | str, *, purchase_id: str, guild_id: int | str,
                     product_name: str, quantity: int, paid_yen: int,
-                    points_used: int, payment_method: str) -> bool:
+                    points_used: int, payment_method: str, vending_machine_id: str = "",
+                    payout_content: str = "") -> bool:
     """成功した購入を一度だけ記録する。パスワード等の商品本文は保存しない。"""
     with _LOCK:
         data = _load()
@@ -204,6 +246,7 @@ def record_purchase(user_id: int | str, *, purchase_id: str, guild_id: int | str
         purchase = {
             "purchase_id": str(purchase_id),
             "guild_id": str(guild_id),
+            "vending_machine_id": str(vending_machine_id),
             "product_name": str(product_name)[:100],
             "quantity": max(1, int(quantity)),
             "paid_yen": max(0, int(paid_yen)),
@@ -211,6 +254,9 @@ def record_purchase(user_id: int | str, *, purchase_id: str, guild_id: int | str
             "payment_method": str(payment_method).upper()[:20],
             "at": _iso(),
         }
+        encrypted = encrypt_payout_content(payout_content)
+        if encrypted:
+            purchase["payout_ciphertext"] = encrypted
         record.setdefault("purchases", []).append(purchase)
         record["purchases"] = record["purchases"][-100:]
         record["purchase_count_total"] = int(record.get("purchase_count_total", 0)) + 1
@@ -232,6 +278,33 @@ def get_user_info(user_id: int | str) -> dict:
         record["total_paid_yen"] = int(record.get("total_paid_yen", sum(int(row.get("paid_yen", 0)) for row in purchases)))
         record["total_points_used"] = int(record.get("total_points_used", sum(int(row.get("points_used", 0)) for row in purchases)))
         return record
+
+
+def get_vending_sales(vending_machine_id: str, since_ts: float) -> dict:
+    """指定自販機の成功済み購入を期間集計する。商品本文やパスワードは対象外。"""
+    with _LOCK:
+        data = _load()
+        rows = []
+        for user_id, record in data.get("users", {}).items():
+            for purchase in record.get("purchases", []):
+                if str(purchase.get("vending_machine_id", "")) != str(vending_machine_id):
+                    continue
+                try:
+                    at = datetime.fromisoformat(str(purchase.get("at", "")).replace("Z", "+00:00"))
+                    timestamp = at.timestamp()
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if timestamp >= float(since_ts):
+                    row = copy.deepcopy(purchase)
+                    row["user_id"] = str(user_id)
+                    rows.append(row)
+        return {
+            "orders": len(rows),
+            "quantity": sum(int(row.get("quantity", 1)) for row in rows),
+            "revenue": sum(int(row.get("paid_yen", 0)) for row in rows),
+            "points_used": sum(int(row.get("points_used", 0)) for row in rows),
+            "rows": sorted(rows, key=lambda row: str(row.get("at", "")), reverse=True),
+        }
 
 
 def register_referral(invitee_id: int | str, code: str, *, account_created_at: float | None = None,
