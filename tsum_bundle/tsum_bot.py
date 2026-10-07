@@ -896,7 +896,7 @@ def set_guild_setting(guild_id, key, value):
 
 # --- サーバーごとのPayPay受取口座 -------------------------------------------
 PAYPAY_UNSET_MSG = ("このサーバーの受取PayPayアカウントが設定されていません。\n"
-                    "サーバーの管理者が `/paypayログイン` で設定してください。")
+                    "サーバーの管理者が `/ツムツムpaypayログイン` で設定してください。")
 
 
 def paypay_guild_file(guild_id):
@@ -927,28 +927,28 @@ def paypay_file_for(guild_id, fallback=None):
 
 # 貸し出し先の管理者向けの説明（コマンド本体の description より短く分かりやすく）
 GUILD_COMMAND_NOTES = {
-    "paypayログイン": "受け取り用のPayPayにログイン（最初にこれ）",
-    "paypayotp": "SMSで届いたコードを入れて登録を完了",
-    "paypay状態": "登録されている口座と状態を確認",
-    "paypayログアウト": "登録した口座情報を削除",
-    "チケットカテゴリー": "注文チケットを作るカテゴリーを設定",
-    "パネル設置": "注文パネル（料金表）を設置",
-    "パネル再設置": "注文パネルを設置し直す",
-    "無料代行": "無料代行パネル（100万コイン・月1回）を設置",
-    "実績チャンネル設定": "代行完了の実績を投稿するチャンネルを設定",
-    "チケットチャンネル設定": "（予備）チケット用チャンネルを設定",
-    "注文状況": "いま処理中の注文を表示",
-    "サーバー貸し出し": "このサーバーの利用期限を確認（操作:確認）",
-    "実績カウント": "実績の件数を確認",
-    "実績カウント設定": "実績の件数を手動で直す",
-    "実績カウンター設定": "件数を付けるチャンネルを別にする（既定は実績チャンネル）",
-    "コマンド一覧": "使えるコマンドをもう一度表示",
+    "ツムツムpaypayログイン": "受け取り用のPayPayにログイン（最初にこれ）",
+    "ツムツムpaypayotp": "SMSで届いたコードを入れて登録を完了",
+    "ツムツムpaypay状態": "登録されている口座と状態を確認",
+    "ツムツムpaypayログアウト": "登録した口座情報を削除",
+    "ツムツムチケットカテゴリー": "注文チケットを作るカテゴリーを設定",
+    "ツムツムパネル設置": "注文パネル（料金表）を設置",
+    "ツムツムパネル再設置": "注文パネルを設置し直す",
+    "ツムツム無料代行": "無料代行パネル（100万コイン・月1回）を設置",
+    "ツムツム実績チャンネル設定": "代行完了の実績を投稿するチャンネルを設定",
+    "ツムツムチケットチャンネル設定": "（予備）チケット用チャンネルを設定",
+    "ツムツム注文状況": "いま処理中の注文を表示",
+    "ツムツムサーバー貸し出し": "このサーバーの利用期限を確認（操作:確認）",
+    "ツムツム実績カウント": "実績の件数を確認",
+    "ツムツム実績カウント設定": "実績の件数を手動で直す",
+    "ツムツム実績カウンター設定": "件数を付けるチャンネルを別にする（既定は実績チャンネル）",
+    "ツムツムコマンド一覧": "使えるコマンドをもう一度表示",
 }
 GUILD_COMMAND_ORDER = [
-    "paypayログイン", "paypayotp", "paypay状態", "paypayログアウト",
-    "チケットカテゴリー", "パネル設置", "パネル再設置", "無料代行",
-    "実績チャンネル設定", "実績カウント", "実績カウント設定", "実績カウンター設定",
-    "チケットチャンネル設定", "注文状況", "サーバー貸し出し", "コマンド一覧",
+    "ツムツムpaypayログイン", "ツムツムpaypayotp", "ツムツムpaypay状態", "ツムツムpaypayログアウト",
+    "ツムツムチケットカテゴリー", "ツムツムパネル設置", "ツムツムパネル再設置", "ツムツム無料代行",
+    "ツムツム実績チャンネル設定", "ツムツム実績カウント", "ツムツム実績カウント設定", "ツムツム実績カウンター設定",
+    "ツムツムチケットチャンネル設定", "ツムツム注文状況", "ツムツムサーバー貸し出し", "ツムツムコマンド一覧",
 ]
 
 
@@ -969,9 +969,9 @@ def owner_command_lines():
 
 PAYPAY_SETUP_STEPS = (
     "**登録のしかた（サーバーの管理者が行ってください）**\n"
-    "1. `/paypayログイン` に PayPayの電話番号とパスワードを入力\n"
-    "2. SMSで届いたコードを `/paypayotp` に入力\n"
-    "3. `/paypay状態` で「このサーバー専用」と表示されたら完了"
+    "1. `/ツムツムpaypayログイン` に PayPayの電話番号とパスワードを入力\n"
+    "2. SMSで届いたコードを `/ツムツムpaypayotp` に入力\n"
+    "3. `/ツムツムpaypay状態` で「このサーバー専用」と表示されたら完了"
 )
 
 
@@ -985,8 +985,8 @@ def paypay_setup_embed(guild):
                 "**登録すると、このサーバーの代行料金はあなたのPayPayアカウントに直接送金されます。**\n\n"
                 + PAYPAY_SETUP_STEPS +
                 "\n\n**登録が済んだら**\n"
-                "・`/チケットカテゴリー` … 注文チケットを作るカテゴリーを指定\n"
-                "・`/パネル設置` … 注文パネルを設置\n\n"
+                "・`/ツムツムチケットカテゴリー` … 注文チケットを作るカテゴリーを指定\n"
+                "・`/ツムツムパネル設置` … 注文パネルを設置\n\n"
                 "※ 登録が済むまで、有料メニューの注文は受け付けられません。"
             ),
             color=0xf1c40f,
@@ -995,9 +995,9 @@ def paypay_setup_embed(guild):
     emb = discord.Embed(
         title="ツムツム代行bot",
         description=(
-            "受取PayPayは登録済みです（`/paypay状態` で確認できます）。\n\n"
-            "・`/チケットカテゴリー` … 注文チケットを作るカテゴリーを指定\n"
-            "・`/パネル設置` … 注文パネルを設置"
+            "受取PayPayは登録済みです（`/ツムツムpaypay状態` で確認できます）。\n\n"
+            "・`/ツムツムチケットカテゴリー` … 注文チケットを作るカテゴリーを指定\n"
+            "・`/ツムツムパネル設置` … 注文パネルを設置"
         ),
         color=0x2ecc71,
     )
@@ -1614,13 +1614,13 @@ def can_operate_ticket(interaction: discord.Interaction, owner_id=None) -> bool:
 # 貸し出し先サーバーの管理者が使えるコマンド（オーナーはすべて使える）。
 # 料金・収益・PayPay・実績カウンターなどオーナーの商売に関わるものは含めない。
 GUILD_ADMIN_COMMANDS = {
-    "パネル設置", "パネル再設置", "無料代行", "チケットカテゴリー",
-    "チケットチャンネル設定", "実績チャンネル設定", "注文状況", "サーバー貸し出し",
+    "ツムツムパネル設置", "ツムツムパネル再設置", "ツムツム無料代行", "ツムツムチケットカテゴリー",
+    "ツムツムチケットチャンネル設定", "ツムツム実績チャンネル設定", "ツムツム注文状況", "ツムツムサーバー貸し出し",
     # 受取PayPayはサーバーごとなので、貸出先の管理者が自分で設定する
-    "paypayログイン", "paypayotp", "paypay状態", "paypayログアウト",
+    "ツムツムpaypayログイン", "ツムツムpaypayotp", "ツムツムpaypay状態", "ツムツムpaypayログアウト",
     # 実績カウンターもサーバーごとなので、その3つも貸出先で使えるようにする
-    "実績カウント", "実績カウント設定", "実績カウンター設定",
-    "コマンド一覧",
+    "ツムツム実績カウント", "ツムツム実績カウント設定", "ツムツム実績カウンター設定",
+    "ツムツムコマンド一覧",
 }
 
 def is_bot_admin(interaction: discord.Interaction) -> bool:
@@ -3915,8 +3915,8 @@ async def _rental_finish_grant(interaction: discord.Interaction, months, amount,
                 invite, ""]
     msg += ["**サーバーに招待したら、最初に受取PayPayを登録してください。**",
             "登録すると、そのサーバーの代行料金はあなたのPayPayアカウントに直接送金されます。",
-            "`/paypayログイン` → `/paypayotp` で登録し、そのあと "
-            "`/チケットカテゴリー`・`/パネル設置` を実行してください。"]
+            "`/ツムツムpaypayログイン` → `/ツムツムpaypayotp` で登録し、そのあと "
+            "`/ツムツムチケットカテゴリー`・`/ツムツムパネル設置` を実行してください。"]
     try:
         await interaction.followup.send(
             embed=discord.Embed(description="\n".join(msg), color=0x2ecc71), ephemeral=True)
@@ -4427,7 +4427,7 @@ def _panel_updated_note(done):
         return f"\n設置済みのパネル {done} 件も更新しました。"
     return "\n※ 設置済みのパネルは見つかりませんでした。必要なら貼り直してください。"
 
-@bot.tree.command(name="パネル設置", description="メニュー(注文パネル)を設置します")
+@bot.tree.command(name="ツムツムパネル設置", description="メニュー(注文パネル)を設置します")
 async def slash_menu(interaction: discord.Interaction):
     await interaction.response.send_message(embed=_menu_panel_embed(), view=MenuView())
     try:
@@ -4436,7 +4436,7 @@ async def slash_menu(interaction: discord.Interaction):
         _dbg(f"[panel] メニューパネルの記録に失敗: {e}")
 
 
-@bot.tree.command(name="パネル再設置", description="メニューパネルを再設置します(特に意味なし)")
+@bot.tree.command(name="ツムツムパネル再設置", description="メニューパネルを再設置します(特に意味なし)")
 async def slash_menu_redisplay(interaction: discord.Interaction):
     await interaction.response.send_message(embed=_menu_panel_embed(), view=MenuView())
     try:
@@ -4445,7 +4445,7 @@ async def slash_menu_redisplay(interaction: discord.Interaction):
         _dbg(f"[panel] メニューパネルの記録に失敗: {e}")
 
 
-@bot.tree.command(name="料金読込", description="bot_config.jsonの料金変更を読み込みます")
+@bot.tree.command(name="ツムツム料金読込", description="bot_config.jsonの料金変更を読み込みます")
 async def slash_menu_reload(interaction: discord.Interaction):
     global CONFIG
     await interaction.response.defer(ephemeral=True)
@@ -4459,7 +4459,7 @@ async def slash_menu_reload(interaction: discord.Interaction):
     await interaction.followup.send("料金を再読込しました。" + _panel_updated_note(done), ephemeral=True)
 
 
-@bot.tree.command(name="料金設定", description="メニューの値段を変更します")
+@bot.tree.command(name="ツムツム料金設定", description="メニューの値段を変更します")
 @app_commands.rename(menu="メニュー", price="料金")
 @app_commands.describe(menu="料金を変更するメニュー", price="変更後の料金")
 @app_commands.choices(menu=PRICE_MENU_CHOICES)
@@ -4482,12 +4482,12 @@ async def slash_set_price(interaction: discord.Interaction, menu: app_commands.C
         _dbg(f"[料金設定] 確認送信失敗 (code={getattr(e,'code',None)}): {e}")
 
 
-@bot.tree.command(name="無料代行", description="無料代行パネル(100万コイン・月1回)を設置します")
+@bot.tree.command(name="ツムツム無料代行", description="無料代行パネル(100万コイン・月1回)を設置します")
 async def slash_free_daikou(interaction: discord.Interaction):
     await interaction.response.send_message(embed=free_daikou_embed(), view=FreeDaikouView())
 
 
-@bot.tree.command(name="チケットカテゴリー", description="チケットを作成するカテゴリを設定します")
+@bot.tree.command(name="ツムツムチケットカテゴリー", description="チケットを作成するカテゴリを設定します")
 @app_commands.rename(category="カテゴリー")
 @app_commands.describe(category="チケットを作るカテゴリー")
 async def slash_ticket_category(interaction: discord.Interaction, category: discord.CategoryChannel):
@@ -4495,14 +4495,14 @@ async def slash_ticket_category(interaction: discord.Interaction, category: disc
     await interaction.response.send_message(f"チケット作成カテゴリーを {category.mention} に設定しました。", ephemeral=True)
 
 
-@bot.tree.command(name="チケットチャンネル設定", description="(予備)チケット用チャンネルを設定します")
+@bot.tree.command(name="ツムツムチケットチャンネル設定", description="(予備)チケット用チャンネルを設定します")
 @app_commands.rename(channel="チャンネル")
 async def slash_ticket_channel(interaction: discord.Interaction, channel: discord.TextChannel):
     set_guild_setting(interaction.guild_id, "ticket_channel_id", str(channel.id))
     await interaction.response.send_message(f"チケットチャンネルを {channel.mention} に設定しました。", ephemeral=True)
 
 
-@bot.tree.command(name="実績チャンネル設定", description="代行完了の実績を投稿するチャンネルを設定します")
+@bot.tree.command(name="ツムツム実績チャンネル設定", description="代行完了の実績を投稿するチャンネルを設定します")
 @app_commands.rename(channel="チャンネル")
 @app_commands.describe(channel="実績を出すチャンネル。空欄で解除")
 async def slash_public_result(interaction: discord.Interaction, channel: discord.TextChannel = None):
@@ -4514,7 +4514,7 @@ async def slash_public_result(interaction: discord.Interaction, channel: discord
     await interaction.response.send_message(f"代行完了の実績を {channel.mention} に自動投稿します。", ephemeral=True)
 
 
-@bot.tree.command(name="実績カウンター設定",
+@bot.tree.command(name="ツムツム実績カウンター設定",
                   description="完了件数をチャンネル名の末尾(-1234)に表示するチャンネルを設定します")
 @app_commands.rename(channel="チャンネル")
 @app_commands.describe(channel="件数を名前に付けるチャンネル。空欄で解除")
@@ -4533,7 +4533,7 @@ async def slash_achievement_channel(interaction: discord.Interaction, channel: d
         ephemeral=True)
 
 
-@bot.tree.command(name="実績カウント設定", description="実績カウンターの件数を手動で設定します")
+@bot.tree.command(name="ツムツム実績カウント設定", description="実績カウンターの件数を手動で設定します")
 @app_commands.rename(count="件数")
 @app_commands.describe(count="設定する件数(0以上)")
 async def slash_achievement_set(interaction: discord.Interaction, count: int):
@@ -4545,7 +4545,7 @@ async def slash_achievement_set(interaction: discord.Interaction, count: int):
     await interaction.response.send_message(f"実績カウントを {count} 件に設定しました。", ephemeral=True)
 
 
-@bot.tree.command(name="実績カウント", description="現在の実績カウント(完了件数)を表示します")
+@bot.tree.command(name="ツムツム実績カウント", description="現在の実績カウント(完了件数)を表示します")
 async def slash_achievement_show(interaction: discord.Interaction):
     n = achievement_count()
     cid = CONFIG.get("achievement_channel_id")
@@ -4555,7 +4555,7 @@ async def slash_achievement_show(interaction: discord.Interaction):
         f"現在の実績カウント: **{n} 件**\n表示チャンネル: {where}", ephemeral=True)
 
 
-@bot.tree.command(name="注文状況", description="現在処理中の注文を表示します")
+@bot.tree.command(name="ツムツム注文状況", description="現在処理中の注文を表示します")
 async def slash_orders(interaction: discord.Interaction):
     if not ACTIVE_ORDERS:
         await interaction.response.send_message("現在処理中の注文はありません。", ephemeral=True)
@@ -4569,7 +4569,7 @@ async def slash_orders(interaction: discord.Interaction):
 
 _APPCMD_BACKUP = os.path.join(HERE, "appcmd_perm_backup.json")
 
-@bot.tree.command(name="コマンド禁止",
+@bot.tree.command(name="ツムツムコマンド禁止",
                   description="全ロール/チャンネルから『アプリコマンドを使う』を剥奪します(他のbotのスラッシュも止まる)")
 async def slash_appcmd_deny(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -4618,11 +4618,11 @@ async def slash_appcmd_deny(interaction: discord.Interaction):
            f"・チャンネルのallow上書き解除 {len(done_ch)}件: {', '.join(done_ch[:8]) or 'なし'}"]
     if skipped:
         msg.append(f"⚠️触れなかった: {', '.join(skipped[:8])}")
-    msg.append("※元に戻すには `/コマンド許可`")
+    msg.append("※元に戻すには `/ツムツムコマンド許可`")
     await interaction.followup.send("\n".join(msg)[:1900], ephemeral=True)
 
 
-@bot.tree.command(name="コマンド許可", description="/コマンド禁止 で剥奪した『アプリコマンドを使う』を元に戻します")
+@bot.tree.command(name="ツムツムコマンド許可", description="/ツムツムコマンド禁止 で剥奪した『アプリコマンドを使う』を元に戻します")
 async def slash_appcmd_allow(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     g = interaction.guild
@@ -4659,7 +4659,7 @@ async def slash_appcmd_allow(interaction: discord.Interaction):
                                     ephemeral=True)
 
 
-@bot.tree.command(name="無料無制限", description="指定した人の『無料代行は月1回』制限を解除/解除取消/一覧します")
+@bot.tree.command(name="ツムツム無料無制限", description="指定した人の『無料代行は月1回』制限を解除/解除取消/一覧します")
 @app_commands.describe(操作="追加=制限解除する / 解除=元に戻す / 一覧=今の登録者を見る",
                        ユーザー="対象のユーザー(一覧のときは不要)")
 @app_commands.choices(操作=[
@@ -4705,7 +4705,7 @@ async def slash_free_unlimited(interaction: discord.Interaction,
         f"<@{uid}> を通常（月1回まで）に戻しました。", ephemeral=True)
 
 
-@bot.tree.command(name="paypayログイン", description="このbotの受取PayPay口座にログインします(SMSにOTPが届きます)")
+@bot.tree.command(name="ツムツムpaypayログイン", description="このbotの受取PayPay口座にログインします(SMSにOTPが届きます)")
 @app_commands.describe(phone="PayPayの電話番号(例 07012345678)", password="PayPayのパスワード")
 async def slash_paypay_login(interaction: discord.Interaction, phone: str, password: str):
     await interaction.response.defer(ephemeral=True)
@@ -4722,7 +4722,7 @@ async def slash_paypay_login(interaction: discord.Interaction, phone: str, passw
                 prefix = line.split(":", 1)[-1].strip()
         msg = ("SMSにOTPコードを送信しました。\n"
                + (f"OTPの接頭辞: `{prefix}`\n" if prefix else "")
-               + "届いた数字を `/paypayotp` で入力してください。")
+               + "届いた数字を `/ツムツムpaypayotp` で入力してください。")
     elif "LOGIN_ERROR" in out:
         msg = "電話番号かパスワードが違う可能性があります。確認してもう一度お試しください。"
     else:
@@ -4730,7 +4730,7 @@ async def slash_paypay_login(interaction: discord.Interaction, phone: str, passw
     await interaction.followup.send(embed=notice_embed(msg, color=0x3498db), ephemeral=True)
 
 
-@bot.tree.command(name="paypayotp", description="paypayログインの後、SMSで届いたOTPコードを入力して完了します")
+@bot.tree.command(name="ツムツムpaypayotp", description="paypayログインの後、SMSで届いたOTPコードを入力して完了します")
 @app_commands.describe(code="SMSで届いたOTPコード(数字)")
 async def slash_paypay_otp(interaction: discord.Interaction, code: str):
     await interaction.response.defer(ephemeral=True)
@@ -4742,20 +4742,20 @@ async def slash_paypay_otp(interaction: discord.Interaction, code: str):
                f"保存先: `{os.path.basename(target)}`\n"
                f"以降、{where} の注文の受け取りはこの口座で行われます。")
     elif "OTP_FAIL" in out:
-        msg = "OTPコードが違うか期限切れです。`/paypayログイン` からやり直してください。"
+        msg = "OTPコードが違うか期限切れです。`/ツムツムpaypayログイン` からやり直してください。"
     else:
         msg = f"OTP確定に失敗しました。\n```{out[:600]}```"
     await interaction.followup.send(embed=notice_embed(msg, color=0x2ecc71), ephemeral=True)
 
 
-@bot.tree.command(name="paypay状態", description="PayPay受取アカウントの安全な状態を確認します")
+@bot.tree.command(name="ツムツムpaypay状態", description="PayPay受取アカウントの安全な状態を確認します")
 async def slash_paypay_status(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     pp_file = paypay_file_for(interaction.guild_id)
     if not pp_file:
         return await interaction.followup.send(
             embed=notice_embed("このサーバーのPayPayアカウントは未設定です。\n"
-                               "`/paypayログイン` で設定してください。", color=0xe67e22),
+                               "`/ツムツムpaypayログイン` で設定してください。", color=0xe67e22),
             ephemeral=True,
         )
     try:
@@ -4782,7 +4782,7 @@ async def slash_paypay_status(interaction: discord.Interaction):
                       f"（{rental_fmt_duration(age)}前）")
         if age > 86400:
             token_line += "\n⚠ 取得から時間が経っています。受け取りに失敗する場合は "\
-                          "`/paypayログイン` → `/paypayotp` で再ログインしてください。"
+                          "`/ツムツムpaypayログイン` → `/ツムツムpaypayotp` で再ログインしてください。"
     else:
         token_line = "取得日時: 不明"
     await interaction.followup.send(
@@ -4845,7 +4845,7 @@ class PayPayLogoutView(discord.ui.View):
         )
 
 
-@bot.tree.command(name="paypayログアウト", description="保存済みPayPay認証情報を削除します")
+@bot.tree.command(name="ツムツムpaypayログアウト", description="保存済みPayPay認証情報を削除します")
 async def slash_paypay_logout(interaction: discord.Interaction):
     pp_file = paypay_file_for(interaction.guild_id)
     if not pp_file:
@@ -4866,7 +4866,7 @@ async def slash_paypay_logout(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="収益", description="今日/今週/今月の収益を確認します")
+@bot.tree.command(name="ツムツム収益", description="今日/今週/今月の収益を確認します")
 async def slash_sales(interaction: discord.Interaction):
     s = sales_summary()
     def line(label, t):
@@ -4877,13 +4877,13 @@ async def slash_sales(interaction: discord.Interaction):
     await interaction.response.send_message(msg, ephemeral=True)
 
 
-@bot.tree.command(name="収益リセット", description="収益記録をリセットします")
+@bot.tree.command(name="ツムツム収益リセット", description="収益記録をリセットします")
 async def slash_sales_reset(interaction: discord.Interaction):
     reset_sales()
     await interaction.response.send_message("収益記録をリセットしました。", ephemeral=True)
 
 
-@bot.tree.command(name="状態", description="状態(IP/アカウント/トークン/CAPTCHA)を確認します")
+@bot.tree.command(name="ツムツム状態", description="状態(IP/アカウント/トークン/CAPTCHA)を確認します")
 async def slash_status(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     loop = asyncio.get_running_loop()
@@ -4891,7 +4891,7 @@ async def slash_status(interaction: discord.Interaction):
     await interaction.followup.send(txt, ephemeral=True)
 
 
-@bot.tree.command(name="ツムログイン確認", description="ツムツムへログインして安全なデバッグ情報を確認します")
+@bot.tree.command(name="ツムツムログイン確認", description="ツムツムへログインして安全なデバッグ情報を確認します")
 async def slash_tsum_login_debug(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     loop = asyncio.get_running_loop()
@@ -4925,7 +4925,7 @@ async def _require_owner(interaction: discord.Interaction) -> bool:
     return False
 
 
-@bot.tree.command(name="サーバー貸し出し", description="サーバーIDを指定してbotを貸し出します(期限付き)")
+@bot.tree.command(name="ツムツムサーバー貸し出し", description="サーバーIDを指定してbotを貸し出します(期限付き)")
 @app_commands.describe(操作="貸出/延長・上書き・永久・返却・確認・一覧",
                        サーバーid="貸し出し先の招待リンクまたはサーバーID(省略時は今いるサーバー)",
                        月数="貸し出す月数(1/3/6/12 など)",
@@ -5023,7 +5023,7 @@ async def slash_rental(interaction: discord.Interaction,
         f"（{rental_until_text(exp)}）。" + (f"\nメモ: {メモ}" if メモ else ""), 0x2ecc71)
 
 
-@bot.tree.command(name="貸出パネル設置", description="サーバー貸し出しの購入パネルを設置します")
+@bot.tree.command(name="ツムツム貸出パネル設置", description="サーバー貸し出しの購入パネルを設置します")
 async def slash_rental_panel(interaction: discord.Interaction):
     if not await _require_owner(interaction):
         return
@@ -5034,7 +5034,7 @@ async def slash_rental_panel(interaction: discord.Interaction):
         _dbg(f"[panel] 貸し出しパネルの記録に失敗: {e}")
 
 
-@bot.tree.command(name="貸出料金設定", description="貸し出しプラン(月数と料金)を追加・変更・削除します")
+@bot.tree.command(name="ツムツム貸出料金設定", description="貸し出しプラン(月数と料金)を追加・変更・削除します")
 @app_commands.describe(月数="プランの月数。0 を指定すると『永久』プラン",
                        料金="料金(円)。-1 を指定するとそのプランを削除します")
 async def slash_rental_price(interaction: discord.Interaction, 月数: int, 料金: int):
@@ -5102,7 +5102,7 @@ async def slash_tsum_help(interaction: discord.Interaction):
         chunks.append("コマンド情報を読み込めませんでした。時間をおいて再度お試しください。")
     for index, chunk in enumerate(chunks):
         embed.add_field(
-            name="コマンド一覧" if index == 0 else "コマンド一覧（続き）",
+            name="ツムツムコマンド一覧" if index == 0 else "コマンド一覧（続き）",
             value=chunk,
             inline=False,
         )
@@ -5110,7 +5110,7 @@ async def slash_tsum_help(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="コマンド一覧", description="このサーバーで使えるコマンドの一覧を表示します")
+@bot.tree.command(name="ツムツムコマンド一覧", description="このサーバーで使えるコマンドの一覧を表示します")
 async def slash_command_list(interaction: discord.Interaction):
     lines = ["**このサーバーで使えるコマンド**（サーバー管理者のみ）", ""]
     lines += guild_admin_command_lines()
@@ -5120,7 +5120,7 @@ async def slash_command_list(interaction: discord.Interaction):
     await interaction.response.send_message(msg[:1990], ephemeral=True)
 
 
-@bot.tree.command(name="自分のサーバー登録", description="このサーバーを『貸し出し不要で常に使える自分のサーバー』にします")
+@bot.tree.command(name="ツムツム自分のサーバー登録", description="このサーバーを『貸し出し不要で常に使える自分のサーバー』にします")
 @app_commands.describe(操作="登録=常に使えるようにする / 解除=元に戻す / 一覧=登録済みを見る")
 @app_commands.choices(操作=[
     app_commands.Choice(name="登録(このサーバーを自分用にする)", value="add"),
@@ -5171,7 +5171,7 @@ async def slash_home_guild(interaction: discord.Interaction, 操作: app_command
         "登録を解除しました。以降は貸し出しの期限が必要になります。", ephemeral=True)
 
 
-@bot.tree.command(name="貸出ログチャンネル設定", description="貸し出しの購入・期限切れを記録するチャンネルを設定します")
+@bot.tree.command(name="ツムツム貸出ログチャンネル設定", description="貸し出しの購入・期限切れを記録するチャンネルを設定します")
 @app_commands.rename(channel="チャンネル")
 @app_commands.describe(channel="記録先チャンネル(未指定で解除)")
 async def slash_rental_log_channel(interaction: discord.Interaction, channel: discord.TextChannel = None):
