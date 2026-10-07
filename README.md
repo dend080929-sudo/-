@@ -152,3 +152,21 @@ npx wrangler deploy
 - アカウント作成から14日未満の参加者は、招待者・参加者の双方とも招待報酬の対象外です。
 - 同じ参加者への重複付与はありません。
 - Botには対象チャンネルの「招待を作成」権限と、サーバー招待一覧を取得できる権限（通常は「サーバー管理」権限）が必要です。
+
+## ツムツム機能の統合
+
+`tsum_bundle/`にツムツム代行機能を配置し、既存のDiscord Botインスタンスへ登録しています。**別のDiscord Botを起動しないため、既存Botの`DISCORD_BOT_TOKEN`だけを使用します。** 既存Botのコマンド、Flask Webサーバー、PayPay/Kyash/メール/ポイント機能はそのまま利用できます。
+
+### 設定
+
+`tsum_bundle/tsum_settings.example.json`を元に設定ファイルを作成します。ローカルでは同じフォルダ内の`tsum_bundle/tsum_settings.json`、RenderではSecret File`/etc/secrets/tsum_settings.json`として配置し、次を設定します。
+
+`allowed_user_ids`にはツムツム管理者のDiscordユーザーIDを配列で指定します。スラッシュコマンドの即時同期先は、既存Botと共通の環境変数`DISCORD_GUILD_ID`で指定します（未設定の場合はグローバル同期となり、反映まで時間がかかることがあります）。`tor_enabled`が`true`の場合は起動時にLinux版Torを使い、不要なら`false`にします。Discord Botトークンはこのファイルへ書かず、既存Botと同じ`DISCORD_BOT_TOKEN`へ設定してください。
+
+Renderでは **New → Web Service → Docker** を選びます。Environment Variablesに既存Bot用の`DISCORD_BOT_TOKEN`等を設定し、ツムツムの設定をSecret File `/etc/secrets/tsum_settings.json`として追加します。`TSUM_BOT_CONFIG=/etc/secrets/tsum_settings.json`を設定し、Health Check Pathは`/healthz`にします。`PORT`はRenderが自動設定し、既存のFlaskサーバーが`0.0.0.0:$PORT`で待ち受けます。
+
+無料プランでもWeb Serviceとして起動できますが、15分間受信アクセスがないとスリープするためBotの常時接続は保証されません。Renderのローカルファイルは再起動・再デプロイで失われることがあり、ツムツムの設定・認証情報・JSONデータは現状Googleスプレッドシートへ自動保存されません。Secret Fileは起動時に設定を渡す用途で、Botが変更してもSecret File自体には書き戻されません。変更・生成データの保持には永続ストレージか別途保存先の実装が必要です。`tsum_bundle/tsum_settings.json`、トークン、LINE認証情報はGitHubへコミットしないでください。
+
+### 統合後の主なコマンド
+
+既存Botのコマンドに加えて、`/パネル設置`、`/無料代行`、`/注文状況`、`/ツムログイン確認`、`/料金設定`などのツムツムコマンドが同じBotから利用できます。既存Bot側との完全一致コマンドは確認時点でありません。

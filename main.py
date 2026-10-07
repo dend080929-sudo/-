@@ -159,6 +159,13 @@ async def setup_hook():
         except Exception as e:
             print(f"❌ Cog読み込みエラー {extension}: {e}")
 
+    # ツムツム機能は別Botを起動せず、この既存Botインスタンスに登録する。
+    try:
+        from tsum_bundle.integration import attach_tsum_bot
+        await attach_tsum_bot(bot)
+    except Exception as e:
+        print(f"❌ ツムツム機能の統合に失敗しました: {type(e).__name__}: {e}")
+
 bot.setup_hook = setup_hook
 
 BACKUP_DIR = "backups"
@@ -322,6 +329,10 @@ def home():
     </body>
     </html>
     """
+
+@app.route("/healthz", methods=["GET"])
+def health_check():
+    return {"status": "ok"}, 200
 
 @app.route("/mail/incoming", methods=["POST"])
 def mail_incoming():
