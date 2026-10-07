@@ -307,6 +307,40 @@ def get_vending_sales(vending_machine_id: str, since_ts: float) -> dict:
         }
 
 
+def get_all_vending_sales(since_ts: float) -> dict:
+    """全自販機の成功済み購入を期間集計し、自販機ID別の内訳も返す。"""
+    with _LOCK:
+        data = _load()
+        by_machine = {}
+        for user_id, record in data.get("users", {}).items():
+            for purchase in record.get("purchases", []):
+                machine_id = str(purchase.get("vending_machine_id", ""))
+                if not machine_id:
+                    continue
+                try:
+                    at = datetime.fromisoformat(str(purchase.get("at", "")).replace("Z", "+00:00"))
+                    if at.timestamp() < float(since_ts):
+                        continue
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                row = copy.deepcopy(purchase)
+                row["user_id"] = str(user_id)
+                bucket = by_machine.setdefault(machine_id, [])
+                bucket.append(row)
+
+        def summarize(rows):
+            return {
+                "orders": len(rows),
+                "quantity": sum(int(row.get("quantity", 1)) for row in rows),
+                "revenue": sum(int(row.get("paid_yen", 0)) for row in rows),
+                "points_used": sum(int(row.get("points_used", 0)) for row in rows),
+                "rows": sorted(rows, key=lambda row: str(row.get("at", "")), reverse=True),
+            }
+
+        all_rows = [row for rows in by_machine.values() for row in rows]
+        return {"total": summarize(all_rows), "by_machine": {key: summarize(rows) for key, rows in by_machine.items()}}
+
+
 def register_referral(invitee_id: int | str, code: str, *, account_created_at: float | None = None,
                       guild_joined_at: float | None = None) -> tuple[bool, str, int]:
     """招待を一度だけ成立させる。Discord IDだけでは同一人物判定はできないため保守的に拒否する。"""
