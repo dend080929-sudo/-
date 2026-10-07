@@ -60,7 +60,7 @@ DEFAULT_CONFIG = {
     "purchase_points_per_100_yen": 1,
     "inviter_reward": 100,
     "invitee_reward": 50,
-    "minimum_account_age_days": 7,
+    "minimum_account_age_days": 14,
     "minimum_guild_membership_days": 1,
 }
 
@@ -93,6 +93,7 @@ def _load() -> dict:
     data.setdefault("referrals", {})
     data.setdefault("transactions", {})
     data.setdefault("suspicious", {})
+    data.setdefault("invite_links", {})
     return data
 
 
@@ -105,14 +106,34 @@ def _user(data: dict, user_id: int | str) -> dict:
     record = data["users"].setdefault(key, {})
     record.setdefault("points", 0)
     record.setdefault("created_at", _iso())
-    record.setdefault("invite_code", "")
+    record.setdefault("invite_code", "")  # 旧データ互換用
     record.setdefault("referred_by", "")
     record.setdefault("referral_status", "none")
     record.setdefault("history", [])
     return record
 
 
+def register_invite_link(inviter_id: int | str, invite_code: str, invite_url: str, guild_id: int | str, channel_id: int | str) -> None:
+    """発行したDiscord招待を保存し、参加イベントで招待者を特定できるようにする。"""
+    with _LOCK:
+        data = _load()
+        record = _user(data, inviter_id)
+        record.setdefault("invite_links", {})[str(invite_code)] = {
+            "url": str(invite_url), "guild_id": str(guild_id), "channel_id": str(channel_id),
+            "created_at": _iso(), "active": True,
+        }
+        data.setdefault("invite_links", {})[str(invite_code)] = {
+            "inviter_id": str(inviter_id), "guild_id": str(guild_id),
+            "channel_id": str(channel_id), "url": str(invite_url), "created_at": _iso(),
+        }
+        _save(data)
+
+def get_invite_link(invite_code: str) -> dict | None:
+    with _LOCK:
+        return copy.deepcopy(_load().get("invite_links", {}).get(str(invite_code)))
+
 def ensure_invite_code(user_id: int | str) -> str:
+    """旧保存データとの互換用。新UIではDiscord招待URLを使用する。"""
     with _LOCK:
         data = _load()
         record = _user(data, user_id)
@@ -341,35 +362,30 @@ def get_all_vending_sales(since_ts: float) -> dict:
         return {"total": summarize(all_rows), "by_machine": {key: summarize(rows) for key, rows in by_machine.items()}}
 
 
-def register_referral(invitee_id: int | str, code: str, *, account_created_at: float | None = None,
-                      guild_joined_at: float | None = None) -> tuple[bool, str, int]:
-    """招待を一度だけ成立させる。Discord IDだけでは同一人物判定はできないため保守的に拒否する。"""
-    invitee_key = str(invitee_id)
-    normalized = str(code or "").strip().upper()
+def register_referral_by_inviter(invitee_id: int | str, inviter_id: int | str, *, account_created_at: float | None = None,
+                                 guild_joined_at: float | None = None) -> tuple[bool, str, int]:
+    """Discord招待リンクで参加したユーザーの招待を一度だけ成立させる。"""
+    invitee_key, inviter_key = str(invitee_id), str(inviter_id)
     with _LOCK:
         data = _load()
         invitee = _user(data, invitee_key)
         if invitee.get("referred_by") or invitee.get("referral_status") in {"accepted", "pending", "rejected"}:
             return False, "このアカウントは、すでに招待登録を処理済みです。", int(invitee["points"])
-        inviter_key = next((uid for uid, rec in data["users"].items() if str(rec.get("invite_code", "")).upper() == normalized), None)
-        if not inviter_key:
-            return False, "招待コードが見つかりません。", int(invitee["points"])
-        if inviter_key == invitee_key:
-            return False, "自分自身の招待コードは登録できません。", int(invitee["points"])
-
+        if inviter_key == invitee_key or inviter_key not in data["users"]:
+            return False, "招待元を確認できません。", int(invitee["points"])
         config = data["config"]
         now = _now()
-        if account_created_at and now - float(account_created_at) < int(config["minimum_account_age_days"]) * 86400:
-            data["suspicious"][invitee_key] = {"reason": "アカウント作成直後", "at": _iso()}
+        # 既存の保存データに旧設定(7日)が残っていても、招待報酬は必ず14日基準にする。
+        minimum_account_age_days = max(14, int(config.get("minimum_account_age_days", 14)))
+        if account_created_at and now - float(account_created_at) < minimum_account_age_days * 86400:
+            # このチェックはポイント付与より前に行うため、招待者・招待された側の双方に付与されない。
+            data["suspicious"][invitee_key] = {"reason": "アカウント作成から14日未満", "at": _iso()}
             _save(data)
-            return False, f"アカウント作成から{config['minimum_account_age_days']}日以上経過してから登録してください。", int(invitee["points"])
+            return False, f"アカウント作成から{minimum_account_age_days}日以上経過してから招待報酬を受け取れます。", int(invitee["points"])
         if guild_joined_at and now - float(guild_joined_at) < int(config["minimum_guild_membership_days"]) * 86400:
             data["suspicious"][invitee_key] = {"reason": "サーバー参加直後", "at": _iso()}
             _save(data)
             return False, f"サーバー参加から{config['minimum_guild_membership_days']}日以上経過してから登録してください。", int(invitee["points"])
-
-        # 招待コードは複数の友達に利用可能。招待される側は一人一回で、
-        # 保存前に全条件を検証しているため同じ登録への二重付与はない。
         referral_id = f"referral:{inviter_key}:{invitee_key}"
         if referral_id in data["referrals"] or any(str(r.get("invitee_id")) == invitee_key for r in data["referrals"].values()):
             return False, "この招待はすでに処理されています。", int(invitee["points"])
@@ -380,15 +396,21 @@ def register_referral(invitee_id: int | str, code: str, *, account_created_at: f
         invitee_amount = int(config.get("invitee_reward", 50))
         _credit(data, inviter_key, inviter_amount, "友達招待報酬", f"{referral_id}:inviter")
         _credit(data, invitee_key, invitee_amount, "招待登録報酬", f"{referral_id}:invitee")
-        invitee["referred_by"] = inviter_key
-        invitee["referral_status"] = "accepted"
-        data["referrals"][referral_id] = {
-            "inviter_id": inviter_key, "invitee_id": invitee_key,
-            "at": _iso(), "status": "accepted",
-        }
+        invitee["referred_by"], invitee["referral_status"] = inviter_key, "accepted"
+        data["referrals"][referral_id] = {"inviter_id": inviter_key, "invitee_id": invitee_key, "at": _iso(), "status": "accepted", "method": "discord_invite_link"}
         _save(data)
         return True, f"招待登録が完了しました。あなたに{invitee_amount}ポイント、招待者に{inviter_amount}ポイントを付与しました。", int(invitee["points"])
 
+def register_referral(invitee_id: int | str, code: str, *, account_created_at: float | None = None,
+                      guild_joined_at: float | None = None) -> tuple[bool, str, int]:
+    """旧招待コードデータを読むための互換API。新規UIからは呼び出さない。"""
+    normalized = str(code or "").strip().upper()
+    with _LOCK:
+        data = _load()
+        inviter_key = next((uid for uid, rec in data["users"].items() if str(rec.get("invite_code", "")).upper() == normalized), None)
+    if not inviter_key:
+        return False, "招待コードが見つかりません。", get_balance(invitee_id)
+    return register_referral_by_inviter(invitee_id, inviter_key, account_created_at=account_created_at, guild_joined_at=guild_joined_at)
 
 def admin_adjust(user_id: int | str, amount: int, reason: str) -> int:
     with _LOCK:

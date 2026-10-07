@@ -6,6 +6,7 @@ import shutil
 import threading
 import time
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime
 from flask import Flask, request
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
@@ -29,9 +30,9 @@ BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
 if RENDER_EXTERNAL_URL:
-    REDIRECT_URI = f"{RENDER_EXTERNAL_URL}/callback"
+    REDIRECT_URI = f"{RENDER_EXTERNAL_URL.rstrip('/')}/callback"
 else:
-    REDIRECT_URI = os.environ.get("REDIRECT_URI", "http://localhost:8080/callback")
+    REDIRECT_URI = os.environ.get("REDIRECT_URI", "http://localhost:8080/callback").rstrip("/")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -364,29 +365,62 @@ def callback():
         "redirect_uri": REDIRECT_URI,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    response = requests.post("https://discord.com/api/oauth2/token", data=data, headers=headers)
-    json_res = response.json()
-
+    try:
+        response = requests.post(
+            "https://discord.com/api/oauth2/token", data=data, headers=headers, timeout=20
+        )
+        json_res = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        print(f"OAuthトークン取得エラー: {type(exc).__name__}: {exc}")
+        return "Discord認証サーバーへの接続に失敗しました。時間を置いて再試行してください。", 502
     if "access_token" not in json_res:
-        return 'トークンの取得に失敗しました。'
-
+        print(f"OAuthトークン取得失敗: HTTP {response.status_code} / {json_res}")
+        return "Discord認証に失敗しました。アプリ設定のRedirect URLを確認してください。", 502
     access_token = json_res["access_token"]
     refresh_token = json_res.get("refresh_token")
 
-    user_res = requests.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
-    user_data = user_res.json()
-    user_id = str(user_data["id"])
-    username = user_data["username"]
+    try:
+        user_res = requests.get(
+            "https://discord.com/api/users/@me",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=20,
+        )
+        user_data = user_res.json()
+        user_id = str(user_data["id"])
+        username = user_data["username"]
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        print(f"Discordユーザー情報取得エラー: {type(exc).__name__}: {exc}")
+        return 'Discordユーザー情報の取得に失敗しました。時間を置いて再試行してください。', 502
 
-    # 認証時にスプレッドシートへ自動保存（永続化）
-    db = load_data()
+    # 認証時にスプレッドシートへ自動保存（永続化）。
+    # Google APIが応答しない場合でも、ブラウザを無限に待たせない。
+    loader = ThreadPoolExecutor(max_workers=1)
+    future = loader.submit(load_data)
+    try:
+        db = future.result(timeout=15)
+    except FutureTimeoutError:
+        future.cancel()
+        loader.shutdown(wait=False, cancel_futures=True)
+        return "認証データの読み込みがタイムアウトしました。Google Sheetsの接続設定を確認してください。", 504
+    except Exception as exc:
+        loader.shutdown(wait=False, cancel_futures=True)
+        print(f"認証データ読み込みエラー: {type(exc).__name__}: {exc}")
+        return "認証データの読み込みに失敗しました。時間を置いて再試行してください。", 502
+    else:
+        loader.shutdown(wait=False, cancel_futures=True)
     db[user_id] = {
         "name": username,
         "access_token": access_token,
         "refresh_token": refresh_token,
         "verified_at": str(datetime.now())
     }
-    save_data(db)
+    def _save_auth_data() -> None:
+        try:
+            save_data(db)
+        except Exception as exc:
+            print(f"認証データ保存エラー: {type(exc).__name__}: {exc}")
+    # Google Sheets障害で認証完了ページが無限に読み込み中にならないよう非同期保存にする。
+    threading.Thread(target=_save_auth_data, name="oauth-save", daemon=True).start()
 
     guild = bot.get_guild(GUILD_ID)
     if guild:
@@ -500,8 +534,8 @@ class TicketView(discord.ui.View):
 class VerifyView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        base_url = RENDER_EXTERNAL_URL if RENDER_EXTERNAL_URL else "http://localhost:8080"
-        oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={requests.utils.quote(base_url + '/callback')}&response_type=code&scope=identify%20guilds.join"
+        # 認証交換時と同じREDIRECT_URIを使い、末尾スラッシュ差異による不一致を防ぐ。
+        oauth_url = f"https://discord.com/api/oauth2/authorize?client_id={CLIENT_ID}&redirect_uri={requests.utils.quote(REDIRECT_URI, safe='')}&response_type=code&scope=identify%20guilds.join"
         self.add_item(discord.ui.Button(label="✅ 認証してロールを受け取る", style=discord.ButtonStyle.link, url=oauth_url))
 
 # -------------------------------------------------------------
@@ -802,7 +836,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="👑 実績管理", value="実績チャンネル（ログチャンネル）の投稿数を自動カウントし、チャンネル名を `👑｜実績ー〇〇` に自動更新します。", inline=False)
     embed.add_field(name="💬 発言機能", value="`/発言` - ボットに指定した言葉を喋らせます。", inline=False)
     embed.add_field(name="✉️ メール機能", value="`/メールパネル設置` - メールアドレス発行パネルを設置します。Gmailの4桁エイリアスにも対応しています。", inline=False)
-    embed.add_field(name="🎁 ポイント・友達招待", value="`/ポイントパネル設置`（管理者）- 客がボタンで使える説明パネルを設置\n`/ポイント`・`/ポイント履歴` - 残高や履歴を確認\n`/招待コード`・`/招待登録` - 招待コードを発行・登録\n`/ポイントランキング` - ランキングを表示\n`/ユーザー情報`（管理者）- 購入・支払額・ポイント・招待情報を確認\n※購入確認画面の「ポイントを使う」から1ポイント＝1円で値引き可能", inline=False)
+    embed.add_field(name="🎁 ポイント・友達招待", value="`/ポイントパネル設置`（管理者）- 客がボタンで使える説明パネルを設置\n`/ポイント`・`/ポイント履歴` - 残高や履歴を確認\n`/招待リンク` - Discord招待リンクを発行（参加時に自動登録）\n`/ポイントランキング` - ランキングを表示\n`/ユーザー情報`（管理者）- 購入・支払額・ポイント・招待情報を確認\n※購入確認画面の「ポイントを使う」から1ポイント＝1円で値引き可能", inline=False)
     embed.add_field(name="🐱 にゃんこ代行", value="`/にゃんこ代行` - 完全版の代行画面を開きます。引き継ぎコード・認証番号・各種設定をWeb画面で指定できます。", inline=False)
     embed.add_field(name="💾 バックアップ＆呼び出し", value="`/バックアップ` - メンバーデータを手動でバックアップし、登録人数を表示します。\n`/一括呼び戻し` - 登録されている全ユーザーをサーバーに一斉呼び戻しします。", inline=False)
     embed.add_field(name="💥 チャンネル管理", value="`/チャンネル再作成` - 現在のチャンネルを初期化（作り直し）します。", inline=False)

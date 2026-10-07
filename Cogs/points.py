@@ -7,12 +7,12 @@ from discord.ext import commands
 from interaction_guard import ensure_deferred
 from points_service import (
     admin_adjust,
-    ensure_invite_code,
+    register_invite_link,
+    register_referral_by_inviter,
     get_balance,
     get_history,
     get_user_info,
     leaderboard,
-    register_referral,
     decrypt_payout_content,
 )
 
@@ -37,30 +37,6 @@ def _ranking_text() -> str:
     return "**ポイントランキング**\n" + "\n".join(lines)
 
 
-class InviteRegisterModal(discord.ui.Modal, title="友達招待コードを登録"):
-    code = discord.ui.TextInput(
-        label="招待コード",
-        placeholder="例：AVEL-AB12CD34",
-        min_length=5,
-        max_length=20,
-        required=True,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await ensure_deferred(interaction, ephemeral=True)
-        member = interaction.user
-        account_created = member.created_at.timestamp() if getattr(member, "created_at", None) else None
-        joined = member.joined_at.timestamp() if getattr(member, "joined_at", None) else None
-        ok, message, balance = register_referral(
-            member.id,
-            str(self.code.value),
-            account_created_at=account_created,
-            guild_joined_at=joined,
-        )
-        prefix = "✅" if ok else "❌"
-        await interaction.followup.send(f"{prefix} {message}\n現在の残高: **{balance}ポイント**", ephemeral=True)
-
-
 class PointsPanelView(discord.ui.View):
     """購入者がコマンドを入力せずに使える永続ボタンパネル。"""
 
@@ -74,20 +50,21 @@ class PointsPanelView(discord.ui.View):
             f"現在のポイント残高は **{get_balance(interaction.user.id)}ポイント** です。", ephemeral=True
         )
 
-    @discord.ui.button(label="自分の招待コード", emoji="🔗", style=discord.ButtonStyle.success, custom_id="points_panel_code")
-    async def code(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="招待リンクを発行", emoji="🔗", style=discord.ButtonStyle.success, custom_id="points_panel_link")
+    async def link(self, interaction: discord.Interaction, button: discord.ui.Button):
         await ensure_deferred(interaction, ephemeral=True)
-        code = ensure_invite_code(interaction.user.id)
-        await interaction.followup.send(
-            f"あなたの招待コードは **`{code}`** です。\n"
-            "このコードは複数の友達に使ってもらえます。招待される側は1アカウントにつき1回だけ登録できます。",
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="招待コードを登録", emoji="🎁", style=discord.ButtonStyle.success, custom_id="points_panel_register")
-    async def register(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(InviteRegisterModal())
-
+        cog = interaction.client.get_cog("PointsCog")
+        try:
+            url = await cog.create_invite_link(interaction)
+            await interaction.followup.send(
+                f"あなたの招待リンクです：{url}\nこのリンクからサーバーに参加すると、招待成立時に自動でポイントが付与されます。",
+                ephemeral=True,
+            )
+        except discord.Forbidden:
+            await interaction.followup.send("招待リンクを作成できません。Botに「招待を作成」権限を付与してください。", ephemeral=True)
+        except (discord.HTTPException, AttributeError) as exc:
+            print(f"招待リンク作成エラー: {exc}")
+            await interaction.followup.send("招待リンクを作成できませんでした。招待を作成できるチャンネルで再試行してください。", ephemeral=True)
     @discord.ui.button(label="履歴", emoji="📜", style=discord.ButtonStyle.secondary, custom_id="points_panel_history")
     async def history(self, interaction: discord.Interaction, button: discord.ui.Button):
         await ensure_deferred(interaction, ephemeral=True)
@@ -102,6 +79,53 @@ class PointsPanelView(discord.ui.View):
 class PointsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._invite_uses: dict[int, dict[str, int]] = {}
+
+    async def create_invite_link(self, interaction: discord.Interaction) -> str:
+        if not interaction.guild or not interaction.channel:
+            raise AttributeError("guild/channel required")
+        invite = await interaction.channel.create_invite(max_age=0, max_uses=0, unique=True, reason="ポイント招待リンク")
+        register_invite_link(interaction.user.id, invite.code, str(invite), interaction.guild.id, interaction.channel.id)
+        self._invite_uses.setdefault(interaction.guild.id, {})[invite.code] = invite.uses or 0
+        return str(invite)
+
+    async def _refresh_invites(self, guild: discord.Guild) -> list[discord.Invite]:
+        invites = await guild.invites()
+        self._invite_uses[guild.id] = {invite.code: (invite.uses or 0) for invite in invites}
+        return invites
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for guild in self.bot.guilds:
+            try:
+                await self._refresh_invites(guild)
+            except discord.HTTPException as exc:
+                print(f"招待一覧の取得に失敗しました({guild.id}): {exc}")
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        try:
+            invites = await member.guild.invites()
+        except discord.HTTPException as exc:
+            print(f"招待利用状況の取得に失敗しました({member.guild.id}): {exc}")
+            return
+        previous = self._invite_uses.get(member.guild.id, {})
+        used = [invite for invite in invites if (invite.uses or 0) > previous.get(invite.code, 0)]
+        self._invite_uses[member.guild.id] = {invite.code: (invite.uses or 0) for invite in invites}
+        if not used:
+            return
+        # 同時参加時は利用数の増加が最も大きい招待を優先する。
+        invite = max(used, key=lambda item: (item.uses or 0) - previous.get(item.code, 0))
+        from points_service import get_invite_link
+        tracked = get_invite_link(invite.code)
+        if not tracked:
+            return
+        ok, message, balance = register_referral_by_inviter(
+            member.id, tracked["inviter_id"],
+            account_created_at=member.created_at.timestamp() if getattr(member, "created_at", None) else None,
+        )
+        if ok:
+            print(f"Discord招待成立: inviter={tracked['inviter_id']} invitee={member.id} ({message})")
 
     @app_commands.command(name="ポイントパネル設置", description="ポイントと友達招待の説明パネルを設置します")
     @app_commands.checks.has_permissions(administrator=True)
@@ -119,7 +143,7 @@ class PointsCog(commands.Cog):
                 "**友達招待**\n"
                 "・招待する人：成立1人につき100ポイント\n"
                 "・招待された人：初回登録で50ポイント\n"
-                "・招待コードは複数の友達が利用可能\n"
+                "・招待リンクからのサーバー参加を自動検出\n"
                 "・招待される側は1アカウントにつき1回のみ\n"
                 "・自分自身や複数アカウントによる不正利用は禁止\n"
                 "・作成直後のアカウントは登録できない場合があります"
@@ -135,31 +159,17 @@ class PointsCog(commands.Cog):
         await ensure_deferred(interaction, ephemeral=True)
         await interaction.followup.send(f"現在のポイント残高は **{get_balance(interaction.user.id)}ポイント** です。", ephemeral=True)
 
-    @app_commands.command(name="招待コード", description="自分専用の友達招待コードを発行・確認します")
-    async def invite_code(self, interaction: discord.Interaction):
+    @app_commands.command(name="招待リンク", description="自分専用の友達招待リンクを発行します")
+    async def invite_link(self, interaction: discord.Interaction):
         await ensure_deferred(interaction, ephemeral=True)
-        code = ensure_invite_code(interaction.user.id)
-        await interaction.followup.send(
-            f"あなたの招待コードは **`{code}`** です。\n"
-            "このコードは複数の友達に使ってもらえます。\n"
-            "招待される側の1アカウントにつき登録は1回だけです。",
-            ephemeral=True,
-        )
-
-    @app_commands.command(name="招待登録", description="友達から受け取った招待コードを登録します（一人一回のみ）")
-    @app_commands.describe(code="友達から受け取った招待コード")
-    async def register_invite(self, interaction: discord.Interaction, code: str):
-        await ensure_deferred(interaction, ephemeral=True)
-        member = interaction.user
-        ok, message, balance = register_referral(
-            member.id,
-            code,
-            account_created_at=member.created_at.timestamp() if getattr(member, "created_at", None) else None,
-            guild_joined_at=member.joined_at.timestamp() if getattr(member, "joined_at", None) else None,
-        )
-        prefix = "✅" if ok else "❌"
-        await interaction.followup.send(f"{prefix} {message}\n現在の残高: **{balance}ポイント**", ephemeral=True)
-
+        try:
+            url = await self.create_invite_link(interaction)
+            await interaction.followup.send(f"あなたの招待リンクです：{url}", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("Botに「招待を作成」権限がありません。", ephemeral=True)
+        except (discord.HTTPException, AttributeError) as exc:
+            print(f"招待リンク作成エラー: {exc}")
+            await interaction.followup.send("招待リンクを作成できませんでした。", ephemeral=True)
     @app_commands.command(name="ポイント履歴", description="ポイントの最新履歴を表示します")
     async def point_history(self, interaction: discord.Interaction):
         await ensure_deferred(interaction, ephemeral=True)
@@ -186,7 +196,7 @@ class PointsCog(commands.Cog):
         embed.add_field(name="購入回数", value=f"**{info.get('purchase_count', 0)}回**", inline=True)
         embed.add_field(name="累計支払額", value=f"**{info.get('total_paid_yen', 0):,}円**", inline=True)
         embed.add_field(name="累計使用ポイント", value=f"**{info.get('total_points_used', 0):,}ポイント**", inline=True)
-        embed.add_field(name="招待コード", value=f"`{info.get('invite_code') or '未発行'}`", inline=True)
+        embed.add_field(name="招待リンク", value="発行済みリンクは参加時に自動判定", inline=True)
         embed.add_field(name="招待元", value=f"`{info.get('referred_by') or 'なし'}`", inline=True)
         purchases = info.get("purchases", [])[-10:]
         if purchases:
