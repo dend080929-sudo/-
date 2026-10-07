@@ -18,6 +18,7 @@ from points_service import (
     award_purchase_points,
     commit_reserved_points,
     get_balance,
+    get_all_vending_sales,
     get_vending_sales,
     record_purchase,
     release_reserved_points,
@@ -550,29 +551,26 @@ class VendingMachineCog(commands.Cog):
         save_json(VENDING_DATA_FILE, vending_data)
         await interaction.followup.send(f"このサーバーでの購入ログチャンネルを {channel.mention} に設定しました。", ephemeral=True)
 
-    @app_commands.command(name="有料自販機売上", description="指定した自販機の今日・3日・1ヶ月の売上を表示します")
+    @app_commands.command(name="全体売上", description="サーバー全体と自販機別の売上を表示します")
     @is_allowed()
-    @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
     @app_commands.choices(period=[
         app_commands.Choice(name="今日", value="today"),
         app_commands.Choice(name="過去3日", value="3days"),
+        app_commands.Choice(name="過去1週間", value="7days"),
         app_commands.Choice(name="過去1ヶ月", value="month"),
     ])
-    @app_commands.describe(vending_machine_id="集計する自販機", period="集計期間")
-    async def vm_sales(self, interaction: discord.Interaction, vending_machine_id: str, period: app_commands.Choice[str]):
+    @app_commands.describe(period="集計期間")
+    async def total_sales(self, interaction: discord.Interaction, period: app_commands.Choice[str]):
         await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
-        vm = vending_data.get(vending_machine_id)
-        if not vm or vm.get("owner_id") != str(interaction.user.id):
-            return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
-
-        days = {"today": 1, "3days": 3, "month": 30}.get(period.value, 1)
+        days = {"today": 1, "3days": 3, "7days": 7, "month": 30}.get(period.value, 1)
         since = datetime.datetime.now(datetime.timezone.utc).timestamp() - days * 86400
-        summary = get_vending_sales(vending_machine_id, since)
-        title_period = {"today": "今日", "3days": "過去3日", "month": "過去1ヶ月"}.get(period.value, period.name)
+        report = get_all_vending_sales(since)
+        summary = report["total"]
+        title_period = {"today": "今日", "3days": "過去3日", "7days": "過去1週間", "month": "過去1ヶ月"}.get(period.value, period.name)
         embed = discord.Embed(
-            title=f"売上レポート：{vm.get('name', '自販機')}",
-            description=f"集計期間：**{title_period}**\n自販機ID：`{vending_machine_id}`",
+            title="サーバー全体売上レポート",
+            description=f"集計期間：**{title_period}**",
             color=discord.Color.green(),
             timestamp=discord.utils.utcnow(),
         )
@@ -580,18 +578,22 @@ class VendingMachineCog(commands.Cog):
         embed.add_field(name="注文数", value=f"**{summary['orders']:,}件**", inline=True)
         embed.add_field(name="払出数量", value=f"**{summary['quantity']:,}個**", inline=True)
         embed.add_field(name="使用ポイント", value=f"{summary['points_used']:,}ポイント", inline=True)
-        product_totals = {}
-        for row in summary["rows"]:
-            name = str(row.get("product_name", "不明"))[:60]
-            product_totals[name] = product_totals.get(name, 0) + int(row.get("quantity", 1))
-        if product_totals:
+        machine_lines = []
+        for machine_id, machine_summary in sorted(report["by_machine"].items()):
+            vm_name = vending_data.get(machine_id, {}).get("name", "不明な自販機")
+            machine_lines.append(
+                f"**{vm_name}** (`{machine_id}`)\n"
+                f"売上 {machine_summary['revenue']:,}円 / "
+                f"{machine_summary['orders']:,}件 / {machine_summary['quantity']:,}個"
+            )
+        if machine_lines:
             embed.add_field(
-                name="商品別数量",
-                value="\n".join(f"{name}：{qty}個" for name, qty in product_totals.items())[:1024],
+                name="自販機別売上",
+                value="\n\n".join(machine_lines)[:1024],
                 inline=False,
             )
         else:
-            embed.add_field(name="商品別数量", value="該当期間の購入はありません。", inline=False)
+            embed.add_field(name="自販機別売上", value="該当期間の購入はありません。", inline=False)
         embed.set_footer(text="購入本文・パスワードは売上集計に保存・表示しません。")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
