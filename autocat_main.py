@@ -334,23 +334,25 @@ OPERATION_RETENTION = 2 * 24 * 60 * 60  # 受付IDと失敗セーブは48時間�
 import sqlite3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BACKUP_DIR = os.path.join(BASE_DIR, "BACKUP")
+RUNTIME_DATA_DIR = os.path.abspath(os.getenv("RUNTIME_DATA_DIR", "/tmp/discord-bot-data"))
+os.makedirs(RUNTIME_DATA_DIR, mode=0o700, exist_ok=True)
+BACKUP_DIR = os.path.join(RUNTIME_DATA_DIR, "BACKUP")
 os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
 try:
     os.chmod(BACKUP_DIR, 0o700)
 except OSError:
     pass
-USAGE_DB_PATH = os.path.join(BASE_DIR, "count.db")
+USAGE_DB_PATH = os.path.join(RUNTIME_DATA_DIR, "count.db")
 try:
     if os.path.exists(USAGE_DB_PATH):
         os.chmod(USAGE_DB_PATH, 0o600)
 except OSError:
     pass
 OPERATION_DB_PATH = os.path.join(BACKUP_DIR, "admin_recovery.db")
-BONUS_DB_PATH = os.path.join(BASE_DIR, "Login", "Bonus.db")
-INVITATION_DB_PATH = os.path.join(BASE_DIR, "invitation", "invitation.db")
-CHAT_DB_PATH = os.path.join(BASE_DIR, "CHAT", "chat.db")
-ACCOUNT_DB_PATH = os.path.join(BASE_DIR, "ACCOUNT", "account.db")
+BONUS_DB_PATH = os.path.join(RUNTIME_DATA_DIR, "Login", "Bonus.db")
+INVITATION_DB_PATH = os.path.join(RUNTIME_DATA_DIR, "invitation", "invitation.db")
+CHAT_DB_PATH = os.path.join(RUNTIME_DATA_DIR, "CHAT", "chat.db")
+ACCOUNT_DB_PATH = os.path.join(RUNTIME_DATA_DIR, "ACCOUNT", "account.db")
 usage_count_lock = threading.Lock()
 
 _identity_secret = os.getenv("IDENTITY_HASH_KEY") or os.getenv("FLASK_SECRET_KEY")

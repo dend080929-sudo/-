@@ -95,11 +95,6 @@ def add_used_link(link: str):
         data["used_links"].append(link)
         save_json(USED_LINKS_FILE, data)
 
-STOCK_DIR = "stock_files"
-os.makedirs(STOCK_DIR, exist_ok=True)
-
-stock_file_path = os.path.join(STOCK_DIR, f"{uuid.uuid4()}.txt")
-
 def load_json(file_path: str) -> dict:
     sheet_name = SHEET_STORES.get(file_path)
     if sheet_name:

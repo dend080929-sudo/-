@@ -168,7 +168,10 @@ async def setup_hook():
 
 bot.setup_hook = setup_hook
 
-BACKUP_DIR = "backups"
+RUNTIME_DATA_DIR = os.path.abspath(os.environ.get("RUNTIME_DATA_DIR", "/tmp/discord-bot-data"))
+os.makedirs(RUNTIME_DATA_DIR, mode=0o700, exist_ok=True)
+BACKUP_DIR = os.path.join(RUNTIME_DATA_DIR, "backups")
+ANNOUNCE_CONFIG_FILE = os.path.join(RUNTIME_DATA_DIR, "announce_config.json")
 
 # -------------------------------------------------------------
 # 📊 Googleスプレッドシート接続設定（完全永続化 & サーバー別設定管理）
@@ -253,7 +256,6 @@ def perform_manual_backup():
         return False, 0
 
 def load_announce_config():
-    ANNOUNCE_CONFIG_FILE = "announce_config.json"
     if not os.path.exists(ANNOUNCE_CONFIG_FILE):
         default_config = {
             "channel_id": 0,
@@ -270,7 +272,6 @@ def load_announce_config():
         return {"channel_id": 0, "interval_hours": 24, "message": "ショップ稼働中！"}
 
 def save_announce_config(config):
-    ANNOUNCE_CONFIG_FILE = "announce_config.json"
     with open(ANNOUNCE_CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=4)
 
