@@ -13,6 +13,7 @@ from points_service import (
     get_user_info,
     leaderboard,
     register_referral,
+    decrypt_payout_content,
 )
 
 
@@ -192,13 +193,37 @@ class PointsCog(commands.Cog):
             lines = []
             for row in reversed(purchases):
                 lines.append(
-                    f"`{row.get('at', '')[:10]}` {row.get('product_name', '不明')} ×{row.get('quantity', 1)} "
+                    f"`{row.get('at', '')[:19]}` {row.get('product_name', '不明')} ×{row.get('quantity', 1)} "
                     f"— {int(row.get('paid_yen', 0)):,}円（{row.get('payment_method', '不明')}）"
                 )
             embed.add_field(name="最近の購入（最大10件）", value="\n".join(lines)[:1024], inline=False)
         else:
             embed.add_field(name="購入履歴", value="購入履歴はありません。", inline=False)
-        embed.set_footer(text="管理者にだけ表示されています。商品本文やパスワードは保存・表示しません。")
+        if await interaction.client.is_owner(interaction.user):
+            payout_rows = []
+            for row in reversed(purchases):
+                ciphertext = row.get("payout_ciphertext", "")
+                content = decrypt_payout_content(ciphertext)
+                if content:
+                    payout_rows.append(
+                        f"【{row.get('at', '')[:19]} / {row.get('product_name', '不明')}】\n{content}"
+                    )
+            if payout_rows:
+                payout_text = "\n\n".join(payout_rows)
+                if len(payout_text) > 3900:
+                    payout_text = payout_text[:3890] + "\n…（長すぎるため省略）"
+                embed.add_field(
+                    name="払い出し内容（Bot所有者限定）",
+                    value=f"```\n{payout_text}\n```",
+                    inline=False,
+                )
+            else:
+                embed.add_field(
+                    name="払い出し内容（Bot所有者限定）",
+                    value="更新後の払い出し記録はありません。過去分は保存されていません。",
+                    inline=False,
+                )
+        embed.set_footer(text="元のユーザー情報は維持。払い出し本文はBot所有者の非公開応答だけに表示します。")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="ポイント付与", description="管理者がポイントを付与します")
