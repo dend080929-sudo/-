@@ -1,6 +1,7 @@
 import sys, os, io, json, asyncio, functools, traceback, re, time, random, collections, datetime
 import concurrent.futures
 import threading
+import urllib.parse
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -1449,6 +1450,21 @@ def _discord_proxy_url():
             return None
         url = str(CONFIG.get("discord_proxy_url") or "").strip()
     if not url:
+        return None
+    parsed = urllib.parse.urlsplit(url)
+    scheme = parsed.scheme.lower()
+    try:
+        proxy_port = parsed.port
+    except ValueError:
+        print("[bot] Discord用プロキシURLのポート指定が不正です。直接接続に切り替えます。")
+        return None
+    if scheme not in {"http", "https"}:
+        print("[bot] Discord用プロキシはHTTP(S)方式が必要です。直接接続に切り替えます。")
+        return None
+    if proxy_port == 9050:
+        # 9050はこのアプリが起動するTor SOCKS専用ポート。discord.pyのHTTP
+        # プロキシ接続を向けるとHTTPの'H' (72)をSOCKS greetingとして受け取る。
+        print("[bot] Discord用HTTPプロキシがTor SOCKSポート(9050)を指しています。直接接続に切り替えます。")
         return None
     # Privoxy等を入れていないホスティング環境でも起動できるように、
     # 繋がらないプロキシは指定しない(指定するとbotがDiscordに接続できず起動できない)。

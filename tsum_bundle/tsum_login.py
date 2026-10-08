@@ -404,16 +404,34 @@ _TOR_CACHE_TTL = 5.0   # 秒。設定変更後すぐ反映されるよう短め�
 
 def _tor_proxies_from_config():
     env = _os.environ.get("TSUM_PROXY_URL", "").strip()
+    from_tor_config = not env
     if env:
-        return {"http": env, "https": env}
+        url = env
+    else:
+        try:
+            d = json.load(open(_BOT_CONFIG_FILE, encoding="utf-8-sig"))
+        except Exception:
+            return None
+        if not d.get("tor_enabled"):
+            return None
+        url = str(d.get("tor_socks_url") or "").strip()
+    if not url:
+        return None
+    # tor_socks_url はSOCKS専用。明示的な汎用TSUM_PROXY_URLはHTTPプロキシも許可するが、
+    # Torの既定ポート9050へHTTP(S) URLを向ける方式不一致だけは防ぐ。
+    parsed = urllib.parse.urlsplit(url)
+    scheme = parsed.scheme.lower()
     try:
-        d = json.load(open(_BOT_CONFIG_FILE, encoding="utf-8-sig"))
-    except Exception:
+        port = parsed.port
+    except ValueError:
         return None
-    if not d.get("tor_enabled"):
+    socks_schemes = {"socks5", "socks5h", "socks4", "socks4a"}
+    if (from_tor_config and scheme not in socks_schemes) or (
+        scheme in {"http", "https"} and port == 9050
+    ):
+        print("[proxy] Tor SOCKSポートとプロキシ方式が一致しません。直接接続に切り替えます。")
         return None
-    url = str(d.get("tor_socks_url") or "").strip()
-    return {"http": url, "https": url} if url else None
+    return {"http": url, "https": url}
 
 
 _PROXY_STATE = {"warned_down": False, "warned_up": False}
