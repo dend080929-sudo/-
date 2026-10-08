@@ -27,7 +27,7 @@ if [ "${TSUM_TOR_START:-1}" = "1" ]; then
         --DataDirectory /tmp/tor-data \
         --GeoIPFile /usr/share/tor/geoip \
         --GeoIPv6File /usr/share/tor/geoip6 \
-        --Log "notice stdout" &
+        --Log "err stdout" &
     TOR_PID=$!
 
     if ! python - <<'PY'
