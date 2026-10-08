@@ -1,6 +1,7 @@
 """Register the Tsum-tsum command suite onto the existing Discord Bot instance."""
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import json
@@ -87,6 +88,29 @@ def _command_root(interaction) -> str:
     return qualified.split(" ", 1)[0]
 
 
+async def _verify_tor_route(login_module: ModuleType) -> None:
+    """Verify the configured Tsum SOCKS route without logging the exit IP."""
+    proxies = login_module._creds_proxy()
+    if not proxies:
+        print("[tor-check] Torプロキシ無効または未到達。現在のTsum API通信は直接接続です。")
+        return
+    try:
+        response = await asyncio.to_thread(
+            login_module.requests.get,
+            "https://check.torproject.org/api/ip",
+            proxies=proxies,
+            timeout=15,
+        )
+        response.raise_for_status()
+        is_tor = bool(response.json().get("IsTor"))
+        if is_tor:
+            print("[tor-check] Tor経由を確認しました (Tor exit verified)。")
+        else:
+            print("[tor-check] SOCKS接続は応答しましたが、Tor出口ではありません。")
+    except Exception as exc:
+        print(f"[tor-check] Tor経由の確認に失敗しました ({type(exc).__name__})。")
+
+
 async def attach_tsum_bot(shared_bot) -> None:
     """Load Tsum commands, events and persistent views onto the host Bot."""
     if getattr(shared_bot, "_tsum_bundle_attached", False):
@@ -151,6 +175,7 @@ async def attach_tsum_bot(shared_bot) -> None:
     # Use listeners rather than @bot.event so the host app's handlers remain registered.
     shared_bot.add_listener(tsum_module.on_ready, "on_ready")
     shared_bot.add_listener(tsum_module.on_guild_join, "on_guild_join")
+    asyncio.create_task(_verify_tor_route(login_module))
 
     configured_proxy = tsum_module._DISCORD_PROXY
     if configured_proxy:
