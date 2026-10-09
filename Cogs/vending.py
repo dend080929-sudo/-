@@ -50,6 +50,9 @@ SHEET_STORES = {
 }
 STOCK_CONTENT_FILE = "stock_contents.json"
 STOCK_CONTENT_SHEET = "paid_stock_contents"
+MAX_STOCK_ATTACHMENT_BYTES = 32 * 1024
+MAX_STOCK_STORE_CHARS = 45_000
+
 
 def read_stock_content(stock_path: str) -> str:
     stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
@@ -75,6 +78,27 @@ def append_stock_content(stock_path: str, lines: list[str]) -> None:
     current = read_stock_content(stock_path).strip()
     addition = "\n".join(line.strip() for line in lines if line.strip())
     write_stock_content(stock_path, "\n".join(part for part in (current, addition) if part))
+
+
+async def read_stock_attachment(attachment) -> list[str]:
+    """Read a UTF-8 text stock attachment; each non-empty line is one stock item."""
+    filename = str(getattr(attachment, "filename", ""))
+    if not filename.lower().endswith(".txt"):
+        raise ValueError("在庫ファイルは.txt形式のみ対応しています。")
+    if int(getattr(attachment, "size", 0) or 0) > MAX_STOCK_ATTACHMENT_BYTES:
+        raise ValueError("在庫ファイルは32KB以下にしてください。")
+
+    content = await attachment.read()
+    if len(content) > MAX_STOCK_ATTACHMENT_BYTES:
+        raise ValueError("在庫ファイルは32KB以下にしてください。")
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("在庫ファイルはUTF-8形式で保存してください。") from exc
+    if "\x00" in text:
+        raise ValueError("在庫ファイルにテキスト以外のデータが含まれています。")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
 
 def delete_stock_content(stock_path: str) -> None:
     stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
@@ -617,7 +641,8 @@ class VendingMachineCog(commands.Cog):
         description="商品説明（任意）",
         price_paypay="PayPay価格",
         price_kyash="Kyash価格",
-        emoji="商品絵文字"
+        emoji="商品絵文字",
+        stock_file="初期在庫の.txt（1行につき1個、最大32KB）"
     )
     async def vm_add_product(
         self, 
@@ -627,7 +652,8 @@ class VendingMachineCog(commands.Cog):
         price_paypay: int,
         price_kyash: int,
         description: Optional[str] = None, 
-        emoji: Optional[str] = None
+        emoji: Optional[str] = None,
+        stock_file: Optional[discord.Attachment] = None,
     ):
         await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
@@ -635,9 +661,26 @@ class VendingMachineCog(commands.Cog):
         if not vm or vm.get("owner_id") != str(interaction.user.id):
             return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
+        initial_stock_lines = []
+        if stock_file is not None:
+            try:
+                initial_stock_lines = await read_stock_attachment(stock_file)
+            except ValueError as exc:
+                return await interaction.followup.send(str(exc), ephemeral=True)
+
         product_id = str(uuid.uuid4())
         stock_file_path = os.path.join(STOCK_DIR_BASE, f"{product_id}.txt")
-        write_stock_content(stock_file_path, "")
+        initial_stock_content = "\n".join(initial_stock_lines)
+        if stock_file is not None:
+            stock_stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
+            stock_stores[stock_file_path] = initial_stock_content
+            if len(json.dumps(stock_stores, ensure_ascii=False)) > MAX_STOCK_STORE_CHARS:
+                return await interaction.followup.send(
+                    "現在の在庫データが保存上限に近いため、このファイルは登録できません。"
+                    "ファイルを小さくするか、既存在庫を減らしてから再試行してください。",
+                    ephemeral=True,
+                )
+        write_stock_content(stock_file_path, initial_stock_content)
 
         new_product = {
             "product_id": product_id,
@@ -655,7 +698,8 @@ class VendingMachineCog(commands.Cog):
         save_json(VENDING_DATA_FILE, vending_data)
         await interaction.followup.send(
             f"自販機「{vm['name']}」に商品「{name}」を追加しました。\n"
-            f"PayPay: {price_paypay}円 | Kyash: {price_kyash}円",
+            f"PayPay: {price_paypay}円 | Kyash: {price_kyash}円\n"
+            f"初期在庫: {len(initial_stock_lines)}個",
             ephemeral=True
         )
 
