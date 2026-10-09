@@ -54,34 +54,65 @@ MAX_STOCK_ATTACHMENT_BYTES = 32 * 1024
 MAX_STOCK_STORE_CHARS = 45_000
 
 
-def read_stock_content(stock_path: str) -> str:
+def read_stock_items(stock_path: str) -> list[str]:
     stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
     if stock_path in stores:
-        return stores[stock_path]
+        stored = stores[stock_path]
+        if isinstance(stored, list):
+            return [str(item) for item in stored if str(item).strip()]
+        if isinstance(stored, str):
+            # 旧形式は1行につき1在庫として読み替える。
+            return [line for line in stored.splitlines() if line.strip()]
+        return []
     # 旧方式のファイルが残っている場合は初回読み込み時にシートへ移行
     if os.path.exists(stock_path):
         try:
             content = open(stock_path, "r", encoding="utf-8").read()
-            stores[stock_path] = content
+            items = [line for line in content.splitlines() if line.strip()]
+            stores[stock_path] = items
             save_json_store(STOCK_CONTENT_SHEET, stores, STOCK_CONTENT_FILE)
-            return content
+            return items
         except OSError:
             pass
-    return ""
+    return []
 
-def write_stock_content(stock_path: str, content: str) -> None:
+
+def write_stock_items(stock_path: str, items: list[str]) -> None:
     stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
-    stores[stock_path] = content
+    stores[stock_path] = [str(item) for item in items if str(item).strip()]
     save_json_store(STOCK_CONTENT_SHEET, stores, STOCK_CONTENT_FILE)
 
+
+def append_stock_items(stock_path: str, items: list[str]) -> int:
+    additions = [str(item) for item in items if str(item).strip()]
+    if not additions:
+        return 0
+    stores = dict(load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE))
+    updated = read_stock_items(stock_path) + additions
+    candidate_stores = dict(stores)
+    candidate_stores[stock_path] = updated
+    if len(json.dumps(candidate_stores, ensure_ascii=False)) > MAX_STOCK_STORE_CHARS:
+        raise ValueError("在庫データの保存上限に近いため、既存在庫を減らすかファイルを小さくしてください。")
+    save_json_store(STOCK_CONTENT_SHEET, candidate_stores, STOCK_CONTENT_FILE)
+    return len(additions)
+
+
+def read_stock_content(stock_path: str) -> str:
+    """Compatibility helper for older integrations; new code should use read_stock_items."""
+    return "\n".join(read_stock_items(stock_path))
+
+
+def write_stock_content(stock_path: str, content: str) -> None:
+    """Compatibility helper for old newline-delimited stock data."""
+    write_stock_items(stock_path, [line for line in content.splitlines() if line.strip()])
+
+
 def append_stock_content(stock_path: str, lines: list[str]) -> None:
-    current = read_stock_content(stock_path).strip()
-    addition = "\n".join(line.strip() for line in lines if line.strip())
-    write_stock_content(stock_path, "\n".join(part for part in (current, addition) if part))
+    append_stock_items(stock_path, lines)
 
 
-async def read_stock_attachment(attachment) -> list[str]:
-    """Read a UTF-8 text stock attachment; each non-empty line is one stock item."""
+async def read_stock_file(attachment) -> str:
+    """Read one UTF-8 .txt file as exactly one stock item, including internal newlines."""
     filename = str(getattr(attachment, "filename", ""))
     if not filename.lower().endswith(".txt"):
         raise ValueError("在庫ファイルは.txt形式のみ対応しています。")
@@ -97,7 +128,10 @@ async def read_stock_attachment(attachment) -> list[str]:
         raise ValueError("在庫ファイルはUTF-8形式で保存してください。") from exc
     if "\x00" in text:
         raise ValueError("在庫ファイルにテキスト以外のデータが含まれています。")
-    return [line.strip() for line in text.splitlines() if line.strip()]
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if not text.strip():
+        raise ValueError("空の在庫ファイルは登録できません。")
+    return text
 
 
 def delete_stock_content(stock_path: str) -> None:
@@ -342,8 +376,8 @@ async def check_stock(interaction: discord.Interaction, products: list) -> None:
                 continue
                 
             try:
-                lines = [line for line in read_stock_content(stock_file).splitlines() if line.strip()]
-                stock_count = len(lines)
+                stock_items = read_stock_items(stock_file)
+                stock_count = len(stock_items)
                 embed.add_field(
                     name=f"{product_name}",
                     value=f"```在庫数: {stock_count}個\n販売数: {sales_count}個```",
@@ -359,7 +393,32 @@ async def check_stock(interaction: discord.Interaction, products: list) -> None:
                 await handle_error(interaction, e)
 
     await interaction.followup.send(embed=embed, ephemeral=True)
-    
+
+
+async def notify_stock_added(interaction: discord.Interaction, vending_machine_id: str, product: dict, added_count: int) -> None:
+    try:
+        if interaction.guild is None:
+            return
+        notification_info = load_stock_notification_data().get(vending_machine_id)
+        if not notification_info or notification_info.get("guild_id") != interaction.guild.id:
+            return
+        channel = interaction.guild.get_channel(notification_info.get("channel_id"))
+        role = interaction.guild.get_role(notification_info.get("role_id"))
+        if not channel or not role:
+            return
+        embed = discord.Embed(
+            title="在庫追加通知",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.add_field(name="追加商品", value=f"```{product['name']}```", inline=True)
+        embed.add_field(name="追加数", value=f"```{added_count}個```", inline=True)
+        embed.set_footer(text="developer@_Avel")
+        await channel.send(role.mention, embed=embed)
+    except Exception as exc:
+        print(f"在庫追加通知送信エラー: {type(exc).__name__}")
+
+
 class KyashError(Exception):
     pass
 
@@ -492,9 +551,6 @@ class VendingMachineCog(commands.Cog):
                 products_data.extend(vm_data.get("products", []))
         
         if products_data:
-            stock_view = VendingMachineCog.ProductSelectViewForStock(products_data)
-            self.bot.add_view(stock_view)
-            
             withdraw_view = VendingMachineCog.WithdrawStockView(products_data, 1)
             self.bot.add_view(withdraw_view)
             
@@ -641,8 +697,7 @@ class VendingMachineCog(commands.Cog):
         description="商品説明（任意）",
         price_paypay="PayPay価格",
         price_kyash="Kyash価格",
-        emoji="商品絵文字",
-        stock_file="初期在庫の.txt（1行につき1個、最大32KB）"
+        emoji="商品絵文字"
     )
     async def vm_add_product(
         self, 
@@ -653,7 +708,6 @@ class VendingMachineCog(commands.Cog):
         price_kyash: int,
         description: Optional[str] = None, 
         emoji: Optional[str] = None,
-        stock_file: Optional[discord.Attachment] = None,
     ):
         await ensure_deferred(interaction, ephemeral=True)
         vending_data = load_json(VENDING_DATA_FILE)
@@ -661,26 +715,9 @@ class VendingMachineCog(commands.Cog):
         if not vm or vm.get("owner_id") != str(interaction.user.id):
             return await interaction.followup.send("指定された自販機が見つかりません。", ephemeral=True)
 
-        initial_stock_lines = []
-        if stock_file is not None:
-            try:
-                initial_stock_lines = await read_stock_attachment(stock_file)
-            except ValueError as exc:
-                return await interaction.followup.send(str(exc), ephemeral=True)
-
         product_id = str(uuid.uuid4())
         stock_file_path = os.path.join(STOCK_DIR_BASE, f"{product_id}.txt")
-        initial_stock_content = "\n".join(initial_stock_lines)
-        if stock_file is not None:
-            stock_stores = load_json_store(STOCK_CONTENT_SHEET, STOCK_CONTENT_FILE)
-            stock_stores[stock_file_path] = initial_stock_content
-            if len(json.dumps(stock_stores, ensure_ascii=False)) > MAX_STOCK_STORE_CHARS:
-                return await interaction.followup.send(
-                    "現在の在庫データが保存上限に近いため、このファイルは登録できません。"
-                    "ファイルを小さくするか、既存在庫を減らしてから再試行してください。",
-                    ephemeral=True,
-                )
-        write_stock_content(stock_file_path, initial_stock_content)
+        write_stock_items(stock_file_path, [])
 
         new_product = {
             "product_id": product_id,
@@ -699,14 +736,16 @@ class VendingMachineCog(commands.Cog):
         await interaction.followup.send(
             f"自販機「{vm['name']}」に商品「{name}」を追加しました。\n"
             f"PayPay: {price_paypay}円 | Kyash: {price_kyash}円\n"
-            f"初期在庫: {len(initial_stock_lines)}個",
+            "初期在庫ファイルを入れる場合は下のボタンから選択してください。\n"
+            "1ファイルが1在庫になり、1回につき最大10ファイルまで追加できます。",
+            view=VendingMachineCog.StockFileUploadView(vending_machine_id, product_id, interaction.user.id),
             ephemeral=True
         )
 
     @app_commands.command(name="有料在庫追加", description="商品の在庫を追加します")
     @is_allowed()
     @app_commands.autocomplete(vending_machine_id=vending_machine_autocomplete)
-    @app_commands.describe(vending_machine_id="自販機", stock_type="在庫タイプ", stock_file="在庫ファイル(txtのみ)")
+    @app_commands.describe(vending_machine_id="自販機", stock_type="在庫タイプ", stock_file="単一の.txt（全文が1在庫）")
     @app_commands.choices(stock_type=[
         app_commands.Choice(name="有限", value="finite"),
         app_commands.Choice(name="無限", value="infinite")
@@ -714,7 +753,7 @@ class VendingMachineCog(commands.Cog):
     async def vm_add_stock(self, interaction: discord.Interaction, vending_machine_id: str, stock_type: str, stock_file: Optional[discord.Attachment] = None):
         
         await ensure_deferred(interaction, ephemeral=True)
-        if stock_file and not stock_file.filename.endswith(".txt"):
+        if stock_file and not stock_file.filename.lower().endswith(".txt"):
             return await interaction.followup.send("ファイル形式は.txtのみ対応しています。", ephemeral=True)
 
         vending_data = load_json(VENDING_DATA_FILE)
@@ -726,7 +765,9 @@ class VendingMachineCog(commands.Cog):
         if not products:
             return await interaction.followup.send("在庫を追加できる商品がありません。", ephemeral=True)
         
-        view = VendingMachineCog.ProductSelectViewForStock(products, stock_file, stock_type)
+        view = VendingMachineCog.ProductSelectViewForStock(
+            vending_machine_id, interaction.user.id, products, stock_file, stock_type
+        )
         await interaction.followup.send("在庫追加を行う商品を選択してください:", view=view, ephemeral=True)
 
     @app_commands.command(name="有料自販機設置", description="自販機パネルを設置します")
@@ -1450,22 +1491,24 @@ class VendingMachineCog(commands.Cog):
                             return await interaction.followup.send(f"決済処理エラー: {str(e)}", ephemeral=True)
 
                 if self.product.get("infinite_stock"):
-                    purchased_content = f"```\n{self.product.get('infinite_content', '')}\n```"
-                    purchased_content_text = self.product.get('infinite_content', '')
+                    purchased_items = [self.product.get('infinite_content', '')]
                 else:
-                    lines = [line for line in read_stock_content(self.product["stock_file"]).splitlines() if line.strip()]
-                    if len(lines) < self.quantity:
+                    stock_items = read_stock_items(self.product["stock_file"])
+                    if len(stock_items) < self.quantity:
                         return await interaction.followup.send(
-                            f"在庫が不足しています。\n必要数: {self.quantity}個\n現在の在庫: {len(lines)}個",
+                            f"在庫が不足しています。\n必要数: {self.quantity}個\n現在の在庫: {len(stock_items)}個",
                             ephemeral=True
                         )
 
-                    purchased_items = lines[:self.quantity]
-                    remaining_items = lines[self.quantity:]
-                    write_stock_content(self.product["stock_file"], "\n".join(remaining_items))
-                    
-                    purchased_content = f"```\n{''.join(purchased_items).strip()}\n```"
-                    purchased_content_text = ''.join(purchased_items).strip()
+                    purchased_items = stock_items[:self.quantity]
+                    remaining_items = stock_items[self.quantity:]
+                    write_stock_items(self.product["stock_file"], remaining_items)
+
+                purchased_content_text = "\n\n──────────────\n\n".join(purchased_items)
+                if len(purchased_content_text) <= 950:
+                    purchased_content = f"```text\n{purchased_content_text}\n```"
+                else:
+                    purchased_content = "内容が長いため、添付の.txtファイルをご確認ください。"
 
                 if reservation_id:
                     if not commit_reserved_points(reservation_id):
@@ -1486,6 +1529,15 @@ class VendingMachineCog(commands.Cog):
                 embed.add_field(name="購入した商品", value=purchased_content, inline=False)
                 embed.set_footer(text="developer@_Avel")
                 await interaction.followup.send(embed=embed, ephemeral=True)
+                if len(purchased_content_text) > 950:
+                    await interaction.followup.send(
+                        "購入内容をテキストファイルでお送りします。",
+                        file=discord.File(
+                            io.BytesIO(purchased_content_text.encode("utf-8")),
+                            filename=f"purchase_{interaction.id}.txt",
+                        ),
+                        ephemeral=True,
+                    )
 
                 # 払い出した商品本文からメールアドレスだけを検出し、購入者専用受信チャンネルを作成する。
                 mail_addresses = extract_email_addresses(purchased_content_text)
@@ -1573,7 +1625,17 @@ class VendingMachineCog(commands.Cog):
                     dm_embed.add_field(name="支払金額", value=f"```{price_display}```", inline=True)
                     dm_embed.add_field(name="決済方法", value=f"```{self.payment_method.upper()}```", inline=True)
                     dm_embed.set_footer(text="developer@_Avel")
-                    await interaction.user.send(purchased_content_text, embed=dm_embed)
+                    if len(purchased_content_text) <= 1800:
+                        await interaction.user.send(purchased_content_text, embed=dm_embed)
+                    else:
+                        await interaction.user.send(
+                            "購入した在庫の内容を添付ファイルでお送りします。",
+                            embed=dm_embed,
+                            file=discord.File(
+                                io.BytesIO(purchased_content_text.encode("utf-8")),
+                                filename=f"purchase_{interaction.id}.txt",
+                            ),
+                        )
                 except:
                     pass
                 
@@ -1753,8 +1815,8 @@ class VendingMachineCog(commands.Cog):
                     if product.get("infinite_stock"):
                         description = f"価格: {price}円│在庫数: ∞個│販売数: {sales_count}個"
                     else:
-                        lines = [line for line in read_stock_content(product.get("stock_file", "")).splitlines() if line.strip()]
-                        stock_count = len(lines)
+                        stock_items = read_stock_items(product.get("stock_file", ""))
+                        stock_count = len(stock_items)
                         
                         description = f"価格: {price}円│在庫数: {stock_count}個│販売数: {sales_count}個"
                     
@@ -1805,8 +1867,8 @@ class VendingMachineCog(commands.Cog):
                         ephemeral=True,
                     )
                 else:
-                    lines = [line for line in read_stock_content(product.get("stock_file", "")).splitlines() if line.strip()]
-                    if len(lines) == 0:
+                    stock_items = read_stock_items(product.get("stock_file", ""))
+                    if not stock_items:
                         embed = discord.Embed(
                             title="在庫不足",
                             description=f"現在 {product['name']}の在庫が不足しています。",
@@ -1890,12 +1952,111 @@ class VendingMachineCog(commands.Cog):
             self.add_item(VendingMachineCog.StockCheckButton(vending_machine_id))
 
     class ProductSelectViewForStock(ui.View):
-        def __init__(self, products: list, attachment: Optional[discord.Attachment] = None, stock_type: str = "finite"):
-            super().__init__(timeout=None)
-            self.add_item(VendingMachineCog.ProductSelectForStock(products, attachment, stock_type))
+        def __init__(self, vending_machine_id: str, owner_id: int, products: list, attachment: Optional[discord.Attachment] = None, stock_type: str = "finite"):
+            super().__init__(timeout=900)
+            self.add_item(VendingMachineCog.ProductSelectForStock(vending_machine_id, owner_id, products, attachment, stock_type))
+
+    class StockFileUploadView(ui.View):
+        def __init__(self, vending_machine_id: str, product_id: str, owner_id: int):
+            super().__init__(timeout=900)
+            self.vending_machine_id = vending_machine_id
+            self.product_id = product_id
+            self.owner_id = int(owner_id)
+
+        @ui.button(label="複数の在庫ファイルを選択", style=discord.ButtonStyle.primary, emoji="📎")
+        async def upload_files(self, interaction: discord.Interaction, button: ui.Button):
+            if interaction.user.id != self.owner_id:
+                return await interaction.response.send_message("この操作を実行したユーザーのみ使用できます。", ephemeral=True)
+            await interaction.response.send_modal(
+                VendingMachineCog.StockFilesModal(self.vending_machine_id, self.product_id, self.owner_id)
+            )
+
+    class StockAddOptionsView(ui.View):
+        def __init__(self, vending_machine_id: str, product: dict, owner_id: int):
+            super().__init__(timeout=900)
+            self.vending_machine_id = vending_machine_id
+            self.product = product
+            self.owner_id = int(owner_id)
+
+        @ui.button(label="複数ファイルを追加（最大10個）", style=discord.ButtonStyle.primary, emoji="📎")
+        async def upload_files(self, interaction: discord.Interaction, button: ui.Button):
+            if interaction.user.id != self.owner_id:
+                return await interaction.response.send_message("この操作を実行したユーザーのみ使用できます。", ephemeral=True)
+            await interaction.response.send_modal(
+                VendingMachineCog.StockFilesModal(
+                    self.vending_machine_id, self.product["product_id"], self.owner_id
+                )
+            )
+
+        @ui.button(label="テキストを行ごとに追加", style=discord.ButtonStyle.secondary, emoji="📝")
+        async def add_text(self, interaction: discord.Interaction, button: ui.Button):
+            if interaction.user.id != self.owner_id:
+                return await interaction.response.send_message("この操作を実行したユーザーのみ使用できます。", ephemeral=True)
+            await interaction.response.send_modal(
+                VendingMachineCog.StockAddModal(self.vending_machine_id, self.product, self.owner_id)
+            )
+
+    class StockFilesModal(ui.Modal, title="在庫ファイル追加"):
+        def __init__(self, vending_machine_id: str, product_id: str, owner_id: int):
+            super().__init__(timeout=300)
+            self.vending_machine_id = vending_machine_id
+            self.product_id = product_id
+            self.owner_id = int(owner_id)
+            self.files_input = ui.FileUpload(
+                custom_id=f"stock-files-{uuid.uuid4().hex}",
+                required=True,
+                min_values=1,
+                max_values=10,
+            )
+            self.add_item(ui.Label(
+                text="在庫ファイル（.txt）",
+                description="1ファイルが1在庫です。1回に最大10個選択できます。",
+                component=self.files_input,
+            ))
+
+        async def on_submit(self, interaction: discord.Interaction):
+            await ensure_deferred(interaction, ephemeral=True)
+            if interaction.user.id != self.owner_id:
+                return await interaction.followup.send("この操作を実行したユーザーのみ使用できます。", ephemeral=True)
+            try:
+                vending_data = load_json(VENDING_DATA_FILE)
+                vm = vending_data.get(self.vending_machine_id)
+                if not vm or vm.get("owner_id") != str(self.owner_id):
+                    return await interaction.followup.send("自販機が見つからないか、操作権限がありません。", ephemeral=True)
+                product = next((p for p in vm.get("products", []) if p.get("product_id") == self.product_id), None)
+                if not product or product.get("infinite_stock"):
+                    return await interaction.followup.send("有限在庫の商品が見つかりません。", ephemeral=True)
+
+                stock_items = []
+                for attachment in self.files_input.values:
+                    try:
+                        stock_items.append(await read_stock_file(attachment))
+                    except ValueError as exc:
+                        return await interaction.followup.send(
+                            f"`{attachment.filename}`: {exc}", ephemeral=True
+                        )
+                added_count = append_stock_items(product["stock_file"], stock_items)
+            except ValueError as exc:
+                return await interaction.followup.send(str(exc), ephemeral=True)
+            except Exception as exc:
+                return await handle_error(interaction, exc)
+            await notify_stock_added(interaction, self.vending_machine_id, product, added_count)
+            try:
+                await interaction.followup.send(
+                    f"商品「{product['name']}」に在庫を{added_count}個追加しました。\n"
+                    "各ファイルの全文が、それぞれ独立した1在庫として保存されています。",
+                    view=VendingMachineCog.StockFileUploadView(
+                        self.vending_machine_id, self.product_id, self.owner_id
+                    ),
+                    ephemeral=True,
+                )
+            except Exception as exc:
+                await handle_error(interaction, exc)
             
     class ProductSelectForStock(ui.Select):
-        def __init__(self, products: list, attachment: Optional[discord.Attachment] = None, stock_type: str = "finite"):
+        def __init__(self, vending_machine_id: str, owner_id: int, products: list, attachment: Optional[discord.Attachment] = None, stock_type: str = "finite"):
+            self.vending_machine_id = vending_machine_id
+            self.owner_id = int(owner_id)
             self.products = products
             self.attachment = attachment
             self.stock_type = stock_type
@@ -1908,6 +2069,8 @@ class VendingMachineCog(commands.Cog):
 
         async def callback(self, interaction: discord.Interaction):
             try:
+                if interaction.user.id != self.owner_id:
+                    return await interaction.response.send_message("この操作を実行したユーザーのみ使用できます。", ephemeral=True)
                 product = next((p for p in self.products if p["product_id"] == self.values[0]), None)
                 if not product:
                     await interaction.response.send_message("商品が見つかりません。", ephemeral=True)
@@ -1917,8 +2080,7 @@ class VendingMachineCog(commands.Cog):
                     if self.attachment:
                         await ensure_deferred(interaction, ephemeral=True)
                         try:
-                            new_stock_content = await self.attachment.read()
-                            infinite_content = new_stock_content.decode('utf-8').strip()
+                            infinite_content = await read_stock_file(self.attachment)
                             
                             vending_data = load_json(VENDING_DATA_FILE)
                             for vm_id, vm_data in vending_data.items():
@@ -1930,6 +2092,8 @@ class VendingMachineCog(commands.Cog):
                             save_json(VENDING_DATA_FILE, vending_data)
                             
                             await interaction.followup.send(f"商品「{product['name']}」を無限在庫に設定しました。", ephemeral=True)
+                        except ValueError as e:
+                            await interaction.followup.send(str(e), ephemeral=True)
                         except Exception as e:
                             await handle_error(interaction, e)
                     else:
@@ -1939,19 +2103,26 @@ class VendingMachineCog(commands.Cog):
                     if self.attachment:
                         await ensure_deferred(interaction, ephemeral=True)
                         try:
-                            new_stock_content = await self.attachment.read()
-                            new_stock_lines = [line for line in new_stock_content.decode('utf-8').splitlines() if line.strip()]
-                            append_stock_content(product["stock_file"], new_stock_lines)
-                            
-                            await interaction.followup.send(f"商品「{product['name']}」に`{len(new_stock_lines)}`個の在庫を追加しました。", ephemeral=True)
-                            
-                            await self.send_stock_notification(interaction, product, len(new_stock_lines))
-                            
+                            stock_item = await read_stock_file(self.attachment)
+                            added_count = append_stock_items(product["stock_file"], [stock_item])
+                            await interaction.followup.send(
+                                f"商品「{product['name']}」に在庫を{added_count}個追加しました。\n"
+                                "添付ファイル全文を1在庫として保存しました。",
+                                ephemeral=True,
+                            )
+                            await self.send_stock_notification(interaction, product, added_count)
+                        except ValueError as e:
+                            await interaction.followup.send(str(e), ephemeral=True)
                         except Exception as e:
                             await handle_error(interaction, e)
                     else:
-                        modal = VendingMachineCog.StockAddModal(product)
-                        await interaction.response.send_modal(modal)
+                        await interaction.response.send_message(
+                            f"商品「{product['name']}」の在庫追加方法を選んでください。",
+                            view=VendingMachineCog.StockAddOptionsView(
+                                self.vending_machine_id, product, self.owner_id
+                            ),
+                            ephemeral=True,
+                        )
             except Exception as e:
                 await handle_error(interaction, e)
         
@@ -1992,9 +2163,11 @@ class VendingMachineCog(commands.Cog):
                 print(f"在庫追加通知送信エラー: {e}")
 
     class StockAddModal(ui.Modal, title="在庫追加"):
-        def __init__(self, product: dict):
+        def __init__(self, vending_machine_id: str, product: dict, owner_id: int):
             super().__init__(timeout=None)
+            self.vending_machine_id = vending_machine_id
             self.product = product
+            self.owner_id = int(owner_id)
 
         stock_input = ui.TextInput(
             label="在庫内容",
@@ -2005,15 +2178,21 @@ class VendingMachineCog(commands.Cog):
 
         async def on_submit(self, interaction: discord.Interaction):
             await ensure_deferred(interaction, ephemeral=True)
+            if interaction.user.id != self.owner_id:
+                return await interaction.followup.send("この操作を実行したユーザーのみ使用できます。", ephemeral=True)
             try:
                 new_stock_lines = [line for line in self.stock_input.value.splitlines() if line.strip()]
-                
-                append_stock_content(self.product["stock_file"], new_stock_lines)
-                
-                await interaction.followup.send(f"商品「{self.product['name']}」に`{len(new_stock_lines)}`個の在庫を追加しました。", ephemeral=True)
-                
-                await self.send_stock_notification(interaction, self.product, len(new_stock_lines))
-                
+                added_count = append_stock_items(self.product["stock_file"], new_stock_lines)
+                await interaction.followup.send(
+                    f"商品「{self.product['name']}」に在庫を{added_count}個追加しました。",
+                    view=VendingMachineCog.StockFileUploadView(
+                        self.vending_machine_id, self.product["product_id"], self.owner_id
+                    ),
+                    ephemeral=True,
+                )
+                await notify_stock_added(interaction, self.vending_machine_id, self.product, added_count)
+            except ValueError as e:
+                await interaction.followup.send(str(e), ephemeral=True)
             except Exception as e:
                 await handle_error(interaction, e)
         
@@ -2140,19 +2319,23 @@ class VendingMachineCog(commands.Cog):
                     await interaction.followup.send(embed=embed, ephemeral=True)
                 else:
                     try:
-                        lines = [line for line in read_stock_content(product["stock_file"]).splitlines() if line.strip()]
-                        if len(lines) < self.quantity:
+                        stock_items = read_stock_items(product["stock_file"])
+                        if len(stock_items) < self.quantity:
                             await interaction.followup.send(
-                                f"在庫が不足しています。\n引出希望数: {self.quantity}個\n現在の在庫: {len(lines)}個",
+                                f"在庫が不足しています。\n引出希望数: {self.quantity}個\n現在の在庫: {len(stock_items)}個",
                                 ephemeral=True
                             )
                             return
 
-                        withdrawn_items = lines[:self.quantity]
-                        remaining_items = lines[self.quantity:]
-                        write_stock_content(product["stock_file"], "\n".join(remaining_items))
-                        
-                        withdrawn_content = f"`{''.join(withdrawn_items).strip()}\n`"
+                        withdrawn_items = stock_items[:self.quantity]
+                        remaining_items = stock_items[self.quantity:]
+                        write_stock_items(product["stock_file"], remaining_items)
+                        withdrawn_text = "\n\n──────────────\n\n".join(withdrawn_items)
+                        withdrawn_content = (
+                            f"```text\n{withdrawn_text}\n```"
+                            if len(withdrawn_text) <= 900
+                            else "内容が長いため、添付の.txtファイルをご確認ください。"
+                        )
                         
                         embed = discord.Embed(
                             title="在庫引出完了",
@@ -2164,6 +2347,15 @@ class VendingMachineCog(commands.Cog):
                         embed.set_footer(text="developer@_Avel")
                         
                         await interaction.followup.send(embed=embed, ephemeral=True)
+                        if len(withdrawn_text) > 900:
+                            await interaction.followup.send(
+                                "引き出した在庫内容をテキストファイルでお送りします。",
+                                file=discord.File(
+                                    io.BytesIO(withdrawn_text.encode("utf-8")),
+                                    filename=f"withdrawn_stock_{product['product_id']}.txt",
+                                ),
+                                ephemeral=True,
+                            )
 
                     except FileNotFoundError:
                         await handle_error(interaction, FileNotFoundError("在庫ファイルが見つかりません。"))
@@ -2210,9 +2402,10 @@ class VendingMachineCog(commands.Cog):
                     await interaction.followup.send(embed=embed, ephemeral=True)
                 else:
                     try:
-                        content = read_stock_content(product["stock_file"]).strip()
+                        stock_items = read_stock_items(product["stock_file"])
+                        stock_text = "\n\n──────────────\n\n".join(stock_items)
 
-                        if not content:
+                        if not stock_items:
                             embed = discord.Embed(
                                 title="在庫内容",
                                 description=f"**商品:** `{product['name']}`\n**在庫数:** `0`個",
@@ -2221,12 +2414,15 @@ class VendingMachineCog(commands.Cog):
                             )
                             embed.add_field(name="在庫内容", value="```\n在庫がありません\n```", inline=False)
                         else:
-                            lines = [line for line in content.splitlines() if line.strip()]
-                            stock_content = f"`{content}`\n"
+                            stock_content = (
+                                f"```text\n{stock_text}\n```"
+                                if len(stock_text) <= 900
+                                else "内容が長いため、添付の.txtファイルをご確認ください。"
+                            )
 
                             embed = discord.Embed(
                                 title="在庫内容",
-                                description=f"**商品:** `{product['name']}`\n**在庫数:** `{len(lines)}`個",
+                                description=f"**商品:** `{product['name']}`\n**在庫数:** `{len(stock_items)}`個",
                                 color=discord.Color.blue(),
                                 timestamp=discord.utils.utcnow()
                             )
@@ -2234,6 +2430,15 @@ class VendingMachineCog(commands.Cog):
 
                         embed.set_footer(text="developer@_Avel")
                         await interaction.followup.send(embed=embed, ephemeral=True)
+                        if stock_items and len(stock_text) > 900:
+                            await interaction.followup.send(
+                                "在庫内容をテキストファイルでお送りします。",
+                                file=discord.File(
+                                    io.BytesIO(stock_text.encode("utf-8")),
+                                    filename=f"stock_{product['product_id']}.txt",
+                                ),
+                                ephemeral=True,
+                            )
 
                     except FileNotFoundError:
                         await handle_error(interaction, FileNotFoundError("在庫ファイルが見つかりません。"))
