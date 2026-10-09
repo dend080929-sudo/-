@@ -20,6 +20,13 @@ import tsum
 import tsum_guest
 from tsum_forge import Forge
 
+from points_service import (
+    get_balance as get_points_balance,
+    reserve_points,
+    commit_reserved_points,
+    release_reserved_points,
+)
+
 _cfg_name = os.environ.get("TSUM_BOT_CONFIG", "bot_config.json")
 CONFIG_FILE = _cfg_name if os.path.isabs(_cfg_name) else os.path.join(HERE, _cfg_name)
 print(f"[bot] 設定ファイル: {os.path.basename(CONFIG_FILE)}")
@@ -496,9 +503,12 @@ def _dbg(msg):
         pass
 
 
-def record_sale(user_id, action, amount):
+def record_sale(user_id, action, amount, points_used=0):
     data = _jload(SALES_FILE, [])
-    data.append({"ts": int(time.time()), "user_id": int(user_id), "action": action, "amount": int(amount)})
+    data.append({
+        "ts": int(time.time()), "user_id": int(user_id), "action": action,
+        "amount": int(amount), "points_used": max(0, int(points_used)),
+    })
     try:
         _jdump_atomic(SALES_FILE, data)
     except Exception:
@@ -1870,6 +1880,9 @@ async def _safe_defer(interaction, ephemeral=True):
     しているぶん遅延が乗るので起こりやすい。失敗しても処理自体は続けたいので
     ここで握って True/False を返す。"""
     try:
+        is_done = getattr(interaction.response, "is_done", None)
+        if callable(is_done) and is_done():
+            return True
         await interaction.response.defer(ephemeral=ephemeral)
         return True
     except discord.NotFound:
@@ -2882,6 +2895,7 @@ def menu_description():
         "プレミアムガチャを完売まで",
         f"**ゲストアカウント生成 - ¥{menu_price('guest_create'):,}**", # ← 追加
         "新規ゲストアカウントを作成・引き継ぎコードを発行します",
+        "会計時にポイントを利用できます（1ポイント＝1円）。PayPayは差引後の金額を送金してください。",
     ])
 
 def is_free_payment_user(user):
@@ -2908,18 +2922,69 @@ def normalize_paypay_link(raw):
         return ""
     return m.group(0).strip("<>、。,.")
 
-def payment_from_inputs(user, menu_key, paypay_raw):
-    if is_free_payment_user(user):
-        return 0, "", None
+def payment_from_amount(user, base_price, paypay_raw, points_raw="0", honor_free_user=True):
+    raw_points = str(points_raw or "0").strip().replace(",", "").replace("，", "") or "0"
+    if not raw_points.isdecimal():
+        return 0, "", "使用ポイントは0以上の整数で入力してください。", 0
+    points_used = int(raw_points)
+    base_price = max(0, int(base_price))
+    if honor_free_user and is_free_payment_user(user):
+        base_price = 0
+    if points_used > base_price:
+        return 0, "", f"使用ポイントは注文金額（{base_price:,}円）以内で指定してください。", 0
+    if points_used:
+        try:
+            balance = get_points_balance(user.id)
+        except Exception as exc:
+            print(f"[points] 残高確認エラー: {type(exc).__name__}", flush=True)
+            return 0, "", "ポイント残高を確認できませんでした。時間を置いて再試行してください。", 0
+        if points_used > balance:
+            return 0, "", f"ポイントが不足しています。現在の残高は{balance:,}ポイントです。", 0
 
-    amount = menu_price(menu_key)
+    amount = base_price - points_used
     if amount <= 0:
-        return 0, "", None
+        return 0, "", None, points_used
 
     link = normalize_paypay_link(paypay_raw)
     if not link:
-        return amount, "", "PayPay送金リンクを入力してください（¥%s ちょうど）。" % format(amount, ",")
-    return amount, link, None
+        return amount, "", f"ポイント差し引き後のPayPay送金リンクを入力してください（¥{amount:,}ちょうど）。", points_used
+    return amount, link, None, points_used
+
+
+def payment_from_inputs(user, menu_key, paypay_raw, points_raw="0"):
+    return payment_from_amount(user, menu_price(menu_key), paypay_raw, points_raw)
+
+
+def _reserve_tsum_points(user_id, points_used, reservation_id):
+    if int(points_used) <= 0:
+        return ""
+    try:
+        if reserve_points(user_id, int(points_used), reservation_id):
+            return reservation_id
+    except Exception as exc:
+        print(f"[points] ツムツムポイント確保エラー: {type(exc).__name__}", flush=True)
+        try:
+            release_reserved_points(reservation_id)
+        except Exception:
+            pass
+    return None
+
+
+def _release_tsum_points(reservation_id):
+    if reservation_id:
+        try:
+            release_reserved_points(reservation_id)
+        except Exception as exc:
+            print(f"[points] ツムツムポイント返却エラー: {type(exc).__name__}", flush=True)
+
+
+def _commit_tsum_points(reservation_id):
+    if reservation_id:
+        try:
+            if not commit_reserved_points(reservation_id):
+                print("[points] ツムツムポイント確定に失敗しました。予約状態を保持します。", flush=True)
+        except Exception as exc:
+            print(f"[points] ツムツムポイント確定エラー: {type(exc).__name__}; 予約状態を保持します。", flush=True)
 
 def _paypay_subprocess_env():
     """PayPayの子プロセスに渡す環境変数。
@@ -3095,6 +3160,10 @@ class TsumHoldApproveView(discord.ui.View):
         self.kwargs = kwargs
         self._last = 0.0
 
+    async def on_timeout(self):
+        # PayPay受取の保留が承認期限を過ぎた場合、仮確保したポイントを返す。
+        _release_tsum_points(self.kwargs.get("points_reservation_id"))
+
     @discord.ui.button(label="承認しました", style=discord.ButtonStyle.green)
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         now = time.monotonic()
@@ -3233,12 +3302,20 @@ def ticket_request_text(action, val):
         return f"{label}"
     return f"{label}\n{val:,}"
 
-def ticket_embed(user, action, val, amount, paypay_link):
+def ticket_embed(user, action, val, amount, paypay_link, points_used=0):
     emb = discord.Embed(title="ツムツム代行", color=0x2ecc71)
-    pay_text = f"支払い済み（¥{amount:,}）" if amount > 0 else "無料"
+    total_amount = int(amount) + int(points_used)
+    pay_text = (
+        f"支払い済み（PayPay ¥{amount:,} + {points_used:,}ポイント）" if points_used and amount > 0
+        else f"ポイント支払い済み（{points_used:,}ポイント）" if points_used
+        else f"支払い済み（¥{amount:,}）" if amount > 0
+        else "無料"
+    )
     emb.description = (
         f"**依頼内容**\n{ticket_request_text(action, val)}\n"
-        f"**金額**\n¥{amount:,}\n"
+        f"**合計金額**\n¥{total_amount:,}\n"
+        f"**使用ポイント**\n{points_used:,}ポイント\n"
+        f"**PayPay支払額**\n¥{amount:,}\n"
         f"**支払い状況**\n{pay_text}\n"
         f"**実行ユーザー**\n{user.mention} ({user.id})"
     )
@@ -3299,8 +3376,11 @@ class TicketView(discord.ui.View):
             return False
         return True
 
-async def send_ticket_header(channel, user, action, val, amount, paypay_link):
-    await channel.send(embed=ticket_embed(user, action, val, amount, paypay_link), view=TicketView(user.id))
+async def send_ticket_header(channel, user, action, val, amount, paypay_link, points_used=0):
+    await channel.send(
+        embed=ticket_embed(user, action, val, amount, paypay_link, points_used),
+        view=TicketView(user.id),
+    )
 
 def ticket_thread_name(action, val):
     if action == "box":
@@ -3325,7 +3405,7 @@ async def reset_menu_message(message):
     except Exception as e:
         print(f"[menu] reset failed: {e}")
 
-async def post_public_result(guild, user, action, val, amount):
+async def post_public_result(guild, user, action, val, amount, points_used=0):
     # 実績カウンター: 完了ごとに +1 して、指定チャンネル名へ反映を要求する。
     # （公開実績チャンネルの設定有無に関係なく常にカウントする）
     increment_achievement()
@@ -3350,10 +3430,14 @@ async def post_public_result(guild, user, action, val, amount):
     emb.set_author(name=user.display_name, icon_url=user.display_avatar.url)
     # 右上にユーザーのアイコンを表示
     emb.set_thumbnail(url=user.display_avatar.url)
+    total_amount = int(amount) + int(points_used)
+    payment_text = (f"**合計金額**\n**¥{total_amount:,}**\n"
+                    f"**内訳**\nPayPay ¥{amount:,} + {points_used:,}ポイント"
+                    if points_used else f"**金額**\n**¥{amount:,}**")
     emb.description = (
         f"**ご利用者**\n**{user.mention}**\n"
         f"**注文内容**\n**{ticket_request_text(action, val)}**\n"
-        f"**金額**\n**¥{amount:,}**"
+        f"{payment_text}"
     )
     try:
         # 本文のメンション(通知)はしない。埋め込み内の表示のみ（通知は飛ばない）。
@@ -3512,7 +3596,7 @@ async def send_retry_prompt(channel, owner_id, action, val, amount, login_ok=Fal
     except (discord.NotFound, discord.Forbidden):
         print("[ticket] retry prompt skipped: channel unavailable")
 
-async def create_ticket_and_forge(interaction: discord.Interaction, action, val, amount, paypay_link, login_id, password, menu_message=None, pp_id="", on_login=None):
+async def create_ticket_and_forge(interaction: discord.Interaction, action, val, amount, paypay_link, login_id, password, menu_message=None, pp_id="", on_login=None, points_used=0, points_reservation_id=None):
     if interaction.guild is None:
         try:
             await interaction.response.send_message(
@@ -3522,40 +3606,64 @@ async def create_ticket_and_forge(interaction: discord.Interaction, action, val,
         return False
     if is_guest_account(login_id):
         return await create_ticket_and_forge_guest(
-            interaction, action, val, amount, paypay_link, login_id, password, menu_message)
+            interaction, action, val, amount, paypay_link, login_id, password, menu_message,
+            points_used=points_used, points_reservation_id=points_reservation_id)
     await _safe_defer(interaction)
+    pp_file = paypay_file_for(interaction.guild_id) if amount > 0 else None
+    if amount > 0 and not pp_file:
+        await interaction.followup.send(embed=notice_embed(PAYPAY_UNSET_MSG), ephemeral=True)
+        await reset_menu_message(menu_message)
+        return False
+
+    reservation_id = points_reservation_id or f"tsum-order:{interaction.id}:points"
+    reservation_id = _reserve_tsum_points(interaction.user.id, points_used, reservation_id)
+    if points_used > 0 and not reservation_id:
+        await interaction.followup.send(
+            embed=notice_embed("ポイント残高が不足しているか、確保に失敗しました。注文をやり直してください。"),
+            ephemeral=True)
+        await reset_menu_message(menu_message)
+        return False
+
     if amount > 0:
-        pp_file = paypay_file_for(interaction.guild_id)
-        if not pp_file:
-            await interaction.followup.send(embed=notice_embed(PAYPAY_UNSET_MSG), ephemeral=True)
-            await reset_menu_message(menu_message)
-            return False
-        async with paypay_lock:
-            if _is_link_consumed(paypay_link):
-                await interaction.followup.send(
-                    embed=notice_embed("この支払いは既に処理済みです。届いていない場合はオーナーにご連絡ください。"), ephemeral=True)
-                return False
-            pres = await _run_paypay_helper_dict("verify_receive", paypay_link, str(int(amount)), pp_file)
-            if pres.get("ok"):
-                _mark_link_consumed(paypay_link)
+        try:
+            async with paypay_lock:
+                if _is_link_consumed(paypay_link):
+                    _release_tsum_points(reservation_id)
+                    await interaction.followup.send(
+                        embed=notice_embed("この支払いは既に処理済みです。届いていない場合はオーナーにご連絡ください。"), ephemeral=True)
+                    return False
+                pres = await _run_paypay_helper_dict("verify_receive", paypay_link, str(int(amount)), pp_file)
+                if pres.get("ok"):
+                    _commit_tsum_points(reservation_id)
+                    try:
+                        _mark_link_consumed(paypay_link)
+                    except Exception as exc:
+                        print(f"[paypay] 受領済リンクの記録に失敗: {type(exc).__name__}", flush=True)
+        except Exception:
+            _release_tsum_points(reservation_id)
+            raise
         if pres.get("held"):
             await interaction.followup.send(
                 embed=_hold_embed(),
                 view=TsumHoldApproveView(create_ticket_and_forge, dict(
                     action=action, val=val, amount=amount, paypay_link=paypay_link,
-                    login_id=login_id, password=password, menu_message=menu_message)),
+                    login_id=login_id, password=password, menu_message=menu_message,
+                    points_used=points_used, points_reservation_id=reservation_id)),
                 ephemeral=True)
             return False
         if not pres.get("ok"):
+            _release_tsum_points(reservation_id)
             await interaction.followup.send(
                 embed=notice_embed(pres.get("msg") or "PayPayの受け取りに失敗しました。"), ephemeral=True)
             clear_tsum_login_files()
             await reset_menu_message(menu_message)
             return False
 
+    _commit_tsum_points(reservation_id)
+
     th = await open_ticket(interaction, ticket_thread_name(action, val))
     await interaction.followup.send(f"チケット作成: {ticket_link(th)}", ephemeral=True)
-    await send_ticket_header(th, interaction.user, action, val, amount, paypay_link)
+    await send_ticket_header(th, interaction.user, action, val, amount, paypay_link, points_used)
     await reset_menu_message(menu_message)
     okey = f"{interaction.id}"
     ACTIVE_ORDERS[okey] = {"user": str(interaction.user), "action": action, "val": val,
@@ -3567,11 +3675,11 @@ async def create_ticket_and_forge(interaction: discord.Interaction, action, val,
                                 stage_box=_stage, **{action: val}, **_extra)
     finally:
         ACTIVE_ORDERS.pop(okey, None)
-    print(f"[注文] {interaction.user} {action} {val} ¥{amount} → {'成功' if ok else '失敗'}", flush=True)
+    print(f"[注文] {interaction.user} {action} {val} PayPay¥{amount} / {points_used}pt → {'成功' if ok else '失敗'}", flush=True)
     if ok:
-        if amount > 0:
-            record_sale(interaction.user.id, action, amount)
-        await post_public_result(interaction.guild, interaction.user, action, val, amount)
+        if amount > 0 or points_used > 0:
+            record_sale(interaction.user.id, action, amount, points_used)
+        await post_public_result(interaction.guild, interaction.user, action, val, amount, points_used)
     else:
         await send_retry_prompt(th, interaction.user.id, action, val, amount,
                                 login_ok=(_stage.get("stage") == "action"))
@@ -3600,34 +3708,47 @@ class ValueModal(discord.ui.Modal):
             max_length=200,
         )
         self.tin = discord.ui.TextInput(label=in_label, placeholder=in_ph)
+        self.points = discord.ui.TextInput(
+            label="使用ポイント（1ポイント＝1円）",
+            placeholder="使わない場合は0。注文金額まで利用できます。",
+            required=False,
+            max_length=15,
+            default="0",
+        )
         self.add_item(self.login_id)
         self.add_item(self.password)
         self.add_item(self.tin)
+        self.add_item(self.points)
         self.paypay = None
         if menu_price(self.menu_key) > 0:
             self.paypay = discord.ui.TextInput(
                 label="PayPay送金リンク",
-                placeholder="https://pay.paypay.ne.jp/xxxx（料金ちょうどを送金）",
-                required=True,
+                placeholder="ポイント差引後の金額ちょうどを送金したリンク",
+                required=False,
                 max_length=200,
             )
             self.add_item(self.paypay)
     async def on_submit(self, interaction: discord.Interaction):
+        await _safe_defer(interaction)
         raw = self.tin.value.strip().replace(",", "").replace("，", "")
         login_id = self.login_id.value.strip()
         password = self.password.value.strip()
         paypay_raw = self.paypay.value.strip() if self.paypay is not None else ""
         if not login_id or not password:
-            await interaction.response.send_message(embed=notice_embed("アカウント情報を入力してください。"), ephemeral=True)
+            await interaction.followup.send(embed=notice_embed("アカウント情報を入力してください。"), ephemeral=True)
             return
         if not raw.isdigit():
-            await interaction.response.send_message(embed=notice_embed("数値で入力してください。"), ephemeral=True); return
+            await interaction.followup.send(embed=notice_embed("数値で入力してください。"), ephemeral=True); return
         val = int(raw)
-        amount, paypay_link, error = payment_from_inputs(interaction.user, self.menu_key, paypay_raw)
+        points_raw = self.points.value.strip()
+        amount, paypay_link, error, points_used = payment_from_inputs(
+            interaction.user, self.menu_key, paypay_raw, points_raw)
         if error:
-            await interaction.response.send_message(embed=notice_embed(error), ephemeral=True)
+            await interaction.followup.send(embed=notice_embed(error), ephemeral=True)
             return
-        await create_ticket_and_forge(interaction, self.action, val, amount, paypay_link, login_id, password, self.menu_message)
+        await create_ticket_and_forge(
+            interaction, self.action, val, amount, paypay_link, login_id, password,
+            self.menu_message, points_used=points_used)
 
 class AccountBeforeTicketModal(discord.ui.Modal):
     def __init__(self, action, val, menu_message=None, menu_key=None):
@@ -3646,52 +3767,77 @@ class AccountBeforeTicketModal(discord.ui.Modal):
             placeholder="パスワード",
             max_length=200,
         )
+        self.points = discord.ui.TextInput(
+            label="使用ポイント（1ポイント＝1円）",
+            placeholder="使わない場合は0。注文金額まで利用できます。",
+            required=False,
+            max_length=15,
+            default="0",
+        )
         self.add_item(self.login_id)
         self.add_item(self.password)
+        self.add_item(self.points)
         self.paypay = None
         if menu_price(self.menu_key) > 0:
             self.paypay = discord.ui.TextInput(
                 label="PayPay送金リンク",
-                placeholder="https://pay.paypay.ne.jp/xxxx（料金ちょうどを送金）",
-                required=True,
+                placeholder="ポイント差引後の金額ちょうどを送金したリンク",
+                required=False,
                 max_length=200,
             )
             self.add_item(self.paypay)
 
     async def on_submit(self, interaction: discord.Interaction):
+        await _safe_defer(interaction)
         login_id = self.login_id.value.strip()
         password = self.password.value.strip()
         paypay_raw = self.paypay.value.strip() if self.paypay is not None else ""
+        points_raw = self.points.value.strip()
         if not login_id or not password:
-            await interaction.response.send_message(embed=notice_embed("アカウント情報を入力してください。"), ephemeral=True)
+            await interaction.followup.send(embed=notice_embed("アカウント情報を入力してください。"), ephemeral=True)
             return
-        amount, paypay_link, error = payment_from_inputs(interaction.user, self.menu_key, paypay_raw)
+        amount, paypay_link, error, points_used = payment_from_inputs(
+            interaction.user, self.menu_key, paypay_raw, points_raw)
         if error:
-            await interaction.response.send_message(embed=notice_embed(error), ephemeral=True)
+            await interaction.followup.send(embed=notice_embed(error), ephemeral=True)
             return
-        await create_ticket_and_forge(interaction, self.action, self.val, amount, paypay_link, login_id, password, self.menu_message)
+        await create_ticket_and_forge(
+            interaction, self.action, self.val, amount, paypay_link, login_id, password,
+            self.menu_message, points_used=points_used)
 
 class GuestCreateModal(discord.ui.Modal):
     def __init__(self, menu_message=None):
         super().__init__(title="ゲストアカウント生成")
         self.menu_message = menu_message
+        self.points = discord.ui.TextInput(
+            label="使用ポイント（1ポイント＝1円）",
+            placeholder="使わない場合は0。注文金額まで利用できます。",
+            required=False,
+            max_length=15,
+            default="0",
+        )
+        self.add_item(self.points)
         self.paypay = None
         if menu_price("guest_create") > 0:
             self.paypay = discord.ui.TextInput(
                 label="PayPay送金リンク",
-                placeholder="https://pay.paypay.ne.jp/xxxx（料金ちょうどを送金）",
-                required=True,
+                placeholder="ポイント差引後の金額ちょうどを送金したリンク",
+                required=False,
                 max_length=200,
             )
             self.add_item(self.paypay)
 
     async def on_submit(self, interaction: discord.Interaction):
+        await _safe_defer(interaction)
         paypay_raw = self.paypay.value.strip() if self.paypay is not None else ""
-        amount, paypay_link, error = payment_from_inputs(interaction.user, "guest_create", paypay_raw)
+        points_raw = self.points.value.strip()
+        amount, paypay_link, error, points_used = payment_from_inputs(
+            interaction.user, "guest_create", paypay_raw, points_raw)
         if error:
-            await interaction.response.send_message(embed=notice_embed(error), ephemeral=True)
+            await interaction.followup.send(embed=notice_embed(error), ephemeral=True)
             return
-        await run_guest_create(interaction, amount, paypay_link, self.menu_message)
+        await run_guest_create(
+            interaction, amount, paypay_link, self.menu_message, points_used=points_used)
 
 
 async def handle_guest_create(interaction: discord.Interaction, menu_message=None):
@@ -3702,7 +3848,7 @@ async def handle_guest_create(interaction: discord.Interaction, menu_message=Non
     return await run_guest_create(interaction, 0, "", menu_message)
 
 
-async def run_guest_create(interaction: discord.Interaction, amount=0, paypay_link="", menu_message=None):
+async def run_guest_create(interaction: discord.Interaction, amount=0, paypay_link="", menu_message=None, points_used=0, points_reservation_id=None):
     """（必要なら支払いを確認してから）ゲストアカウントを作って引き継ぎ情報を渡す。"""
     if interaction.guild is None:
         try:
@@ -3713,37 +3859,60 @@ async def run_guest_create(interaction: discord.Interaction, amount=0, paypay_li
         return False
     await _safe_defer(interaction)
 
+    pp_file = paypay_file_for(interaction.guild_id) if amount > 0 else None
+    if amount > 0 and not pp_file:
+        await interaction.followup.send(embed=notice_embed(PAYPAY_UNSET_MSG), ephemeral=True)
+        await reset_menu_message(menu_message)
+        return False
+
+    reservation_id = points_reservation_id or f"tsum-order:{interaction.id}:points"
+    reservation_id = _reserve_tsum_points(interaction.user.id, points_used, reservation_id)
+    if points_used > 0 and not reservation_id:
+        await interaction.followup.send(
+            embed=notice_embed("ポイント残高が不足しているか、確保に失敗しました。注文をやり直してください。"),
+            ephemeral=True)
+        await reset_menu_message(menu_message)
+        return False
+
     if amount > 0:
-        pp_file = paypay_file_for(interaction.guild_id)
-        if not pp_file:
-            await interaction.followup.send(embed=notice_embed(PAYPAY_UNSET_MSG), ephemeral=True)
-            await reset_menu_message(menu_message)
-            return False
-        async with paypay_lock:
-            if _is_link_consumed(paypay_link):
-                await interaction.followup.send(
-                    embed=notice_embed("この支払いは既に処理済みです。届いていない場合はオーナーにご連絡ください。"),
-                    ephemeral=True)
-                return False
-            pres = await _run_paypay_helper_dict("verify_receive", paypay_link, str(int(amount)), pp_file)
-            if pres.get("ok"):
-                _mark_link_consumed(paypay_link)
+        try:
+            async with paypay_lock:
+                if _is_link_consumed(paypay_link):
+                    _release_tsum_points(reservation_id)
+                    await interaction.followup.send(
+                        embed=notice_embed("この支払いは既に処理済みです。届いていない場合はオーナーにご連絡ください。"),
+                        ephemeral=True)
+                    return False
+                pres = await _run_paypay_helper_dict("verify_receive", paypay_link, str(int(amount)), pp_file)
+                if pres.get("ok"):
+                    _commit_tsum_points(reservation_id)
+                    try:
+                        _mark_link_consumed(paypay_link)
+                    except Exception as exc:
+                        print(f"[paypay] 受領済リンクの記録に失敗: {type(exc).__name__}", flush=True)
+        except Exception:
+            _release_tsum_points(reservation_id)
+            raise
         if pres.get("held"):
             await interaction.followup.send(
                 embed=_hold_embed(),
                 view=TsumHoldApproveView(run_guest_create, dict(
-                    amount=amount, paypay_link=paypay_link, menu_message=menu_message)),
+                    amount=amount, paypay_link=paypay_link, menu_message=menu_message,
+                    points_used=points_used, points_reservation_id=reservation_id)),
                 ephemeral=True)
             return False
         if not pres.get("ok"):
+            _release_tsum_points(reservation_id)
             await interaction.followup.send(
                 embed=notice_embed(pres.get("msg") or "PayPayの受け取りに失敗しました。"), ephemeral=True)
             await reset_menu_message(menu_message)
             return False
 
+    _commit_tsum_points(reservation_id)
+
     th = await open_ticket(interaction, "ゲスト生成")
     await interaction.followup.send(f"チケット作成: {ticket_link(th)}", ephemeral=True)
-    await send_ticket_header(th, interaction.user, "ゲストアカウント生成", 0, amount, paypay_link)
+    await send_ticket_header(th, interaction.user, "ゲストアカウント生成", 0, amount, paypay_link, points_used)
     await reset_menu_message(menu_message)
 
     await th.send(embed=discord.Embed(description="ゲストアカウントを生成中です...", color=0x3498db))
@@ -3799,9 +3968,9 @@ async def run_guest_create(interaction: discord.Interaction, amount=0, paypay_li
             "※ツムツムアプリの『設定 → 引き継ぎ』からログインしてください。"
         )
         await th.send(embed=discord.Embed(description=msg, color=0x2ecc71))
-        if amount > 0:
-            record_sale(interaction.user.id, "guest_create", amount)
-        await post_public_result(interaction.guild, interaction.user, "ゲストアカウント生成", 0, amount)
+        if amount > 0 or points_used > 0:
+            record_sale(interaction.user.id, "guest_create", amount, points_used)
+        await post_public_result(interaction.guild, interaction.user, "ゲストアカウント生成", 0, amount, points_used)
         return True
     await th.send(embed=notice_embed(err_msg or "エラーが発生しました。"))
     return False
@@ -3904,7 +4073,8 @@ def rental_panel_embed():
     lines += [
         "",
         "下のメニューから期間を選び、表示される画面に",
-        "**あなたのサーバーの招待リンク** と **PayPay送金リンク（料金ちょうど）** を入力してください。",
+        "**あなたのサーバーの招待リンク**、**使用ポイント（1ポイント＝1円）**、",
+        "**ポイント差引後のPayPay送金リンク**を入力してください。ポイントを使わない場合は0を指定します。",
         "受け取りが完了すると、その場でそのサーバーが使えるようになります。",
         "（招待リンクは サーバー名を右クリック →「友達を招待」から作れます。",
         "　サーバーIDやチャンネルのリンクを貼っても大丈夫です）",
@@ -3913,18 +4083,19 @@ def rental_panel_embed():
                          description="\n".join(lines), color=0x9b59b6)
 
 
-async def _rental_finish_grant(interaction: discord.Interaction, months, amount, guild_id):
+async def _rental_finish_grant(interaction: discord.Interaction, months, amount, guild_id, points_used=0):
     """支払い確認後に、指定サーバーへ貸し出しを付与して案内する。"""
     exp = rental_grant(guild_id, months=months, unlimited=(int(months) <= 0),
                        by=interaction.user.id, note=f"購入({rental_plan_label(months)})",
                        extend=True)
-    if amount > 0:
-        record_sale(interaction.user.id, f"rental_{months}m", amount)
+    if amount > 0 or points_used > 0:
+        record_sale(interaction.user.id, f"rental_{months}m", amount, points_used)
     guild = bot.get_guild(int(guild_id))
     invite = bot_invite_url()
     msg = [f"**貸し出しを開始しました（{rental_plan_label(months)}）**",
            f"サーバー: {guild.name if guild else '未参加'}（`{guild_id}`）",
            f"有効期限: {rental_until_text(exp)}",
+           f"お支払い: PayPay ¥{amount:,} / {points_used:,}ポイント",
            ""]
     if guild is None and invite:
         msg += ["まだ bot がそのサーバーにいません。下のリンクから招待してください。",
@@ -3939,48 +4110,70 @@ async def _rental_finish_grant(interaction: discord.Interaction, months, amount,
     except Exception as e:
         _dbg(f"[rental] 購入案内の送信失敗: {e}")
     print(f"[貸し出し] 購入 {interaction.user} guild={guild_id} "
-          f"{rental_plan_label(months)} ¥{amount}", flush=True)
+          f"{rental_plan_label(months)} PayPay¥{amount} / {points_used}pt", flush=True)
     await _rental_notify(
         f"{interaction.user}（{interaction.user.id}）が **{rental_plan_label(months)}** の"
         f"貸し出しを購入しました。\nサーバー: {guild.name if guild else '未参加'}"
-        f"（{guild_id}）/ ¥{amount:,} / {rental_until_text(exp)}", 0x2ecc71)
+        f"（{guild_id}）/ PayPay ¥{amount:,} + {points_used:,}ポイント / {rental_until_text(exp)}", 0x2ecc71)
     return True
 
 
 async def process_rental_purchase(interaction: discord.Interaction, months, amount, paypay_link,
-                                  guild_id, deferred=False):
+                                  guild_id, deferred=False, points_used=0, points_reservation_id=None):
     """PayPayリンクを受け取り、成功したらそのサーバーへ貸し出す。"""
     if not deferred:
         await interaction.response.defer(ephemeral=True)
+    pp_file = paypay_file_for(interaction.guild_id, fallback=True) if amount > 0 else None
+    if amount > 0 and not pp_file:
+        await interaction.followup.send(
+            embed=notice_embed("受取PayPayアカウントが未設定です。オーナーにご連絡ください。"),
+            ephemeral=True)
+        return False
+
+    reservation_id = points_reservation_id or f"tsum-rental:{interaction.id}:points"
+    reservation_id = _reserve_tsum_points(interaction.user.id, points_used, reservation_id)
+    if points_used > 0 and not reservation_id:
+        await interaction.followup.send(
+            embed=notice_embed("ポイント残高が不足しているか、確保に失敗しました。購入をやり直してください。"),
+            ephemeral=True)
+        return False
+
     if amount > 0:
-        pp_file = paypay_file_for(interaction.guild_id, fallback=True)
-        if not pp_file:
-            await interaction.followup.send(
-                embed=notice_embed("受取PayPayアカウントが未設定です。オーナーにご連絡ください。"),
-                ephemeral=True)
-            return False
-        async with paypay_lock:
-            if _is_link_consumed(paypay_link):
-                await interaction.followup.send(
-                    embed=notice_embed("この支払いは既に処理済みです。反映されていない場合はオーナーにご連絡ください。"),
-                    ephemeral=True)
-                return False
-            pres = await _run_paypay_helper_dict(
-                "verify_receive", paypay_link, str(int(amount)), pp_file)
-            if pres.get("ok"):
-                _mark_link_consumed(paypay_link)
+        try:
+            async with paypay_lock:
+                if _is_link_consumed(paypay_link):
+                    _release_tsum_points(reservation_id)
+                    await interaction.followup.send(
+                        embed=notice_embed("この支払いは既に処理済みです。反映されていない場合はオーナーにご連絡ください。"),
+                        ephemeral=True)
+                    return False
+                pres = await _run_paypay_helper_dict(
+                    "verify_receive", paypay_link, str(int(amount)), pp_file)
+                if pres.get("ok"):
+                    _commit_tsum_points(reservation_id)
+                    try:
+                        _mark_link_consumed(paypay_link)
+                    except Exception as exc:
+                        print(f"[paypay] 受領済リンクの記録に失敗: {type(exc).__name__}", flush=True)
+        except Exception:
+            _release_tsum_points(reservation_id)
+            raise
         if pres.get("held"):
             await interaction.followup.send(
                 embed=_hold_embed(),
                 view=TsumHoldApproveView(process_rental_purchase, dict(
-                    months=months, amount=amount, paypay_link=paypay_link, guild_id=guild_id)),
+                    months=months, amount=amount, paypay_link=paypay_link, guild_id=guild_id,
+                    points_used=points_used, points_reservation_id=reservation_id)),
                 ephemeral=True)
             return False
         if not pres.get("ok"):
+            _release_tsum_points(reservation_id)
             await interaction.followup.send(
                 embed=notice_embed(pres.get("msg") or "PayPayの受け取りに失敗しました。"), ephemeral=True)
             return False
-    return await _rental_finish_grant(interaction, months, amount, guild_id)
+
+    _commit_tsum_points(reservation_id)
+    return await _rental_finish_grant(interaction, months, amount, guild_id, points_used)
 
 
 class RentalPayModal(discord.ui.Modal):
@@ -3993,12 +4186,21 @@ class RentalPayModal(discord.ui.Modal):
             placeholder="https://discord.gg/xxxx（サーバーIDでも可）",
             max_length=200,
         )
+        self.points = discord.ui.TextInput(
+            label="使用ポイント（1ポイント＝1円）",
+            placeholder="使わない場合は0。注文金額まで利用できます。",
+            required=False,
+            max_length=15,
+            default="0",
+        )
         self.paypay = discord.ui.TextInput(
             label="PayPay送金リンク",
-            placeholder=f"https://pay.paypay.ne.jp/xxxx（{price:,}円 ちょうどを送金）",
+            placeholder="ポイント差引後の金額ちょうどを送金したリンク",
+            required=False,
             max_length=200,
         )
         self.add_item(self.guild_id)
+        self.add_item(self.points)
         self.add_item(self.paypay)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -4009,14 +4211,15 @@ class RentalPayModal(discord.ui.Modal):
             await interaction.followup.send(
                 embed=notice_embed(err or "サーバーを特定できませんでした。"), ephemeral=True)
             return
-        link = normalize_paypay_link(self.paypay.value)
-        if not link:
-            await interaction.followup.send(
-                embed=notice_embed("PayPay送金リンクを入力してください（%s円 ちょうど）。"
-                                   % format(self.price, ",")), ephemeral=True)
+        amount, link, error, points_used = payment_from_amount(
+            interaction.user, self.price, self.paypay.value, self.points.value,
+            honor_free_user=False)
+        if error:
+            await interaction.followup.send(embed=notice_embed(error), ephemeral=True)
             return
-        await process_rental_purchase(interaction, self.months, self.price, link, gid,
-                                      deferred=True)
+        await process_rental_purchase(
+            interaction, self.months, amount, link, gid,
+            deferred=True, points_used=points_used)
 
 
 class RentalPlanSelect(discord.ui.Select):
@@ -4167,7 +4370,8 @@ def free_daikou_embed():
 
 
 async def create_ticket_and_forge_guest(interaction: discord.Interaction, action, val, amount,
-                                         paypay_link, migration_id, password, menu_message=None):
+                                         paypay_link, migration_id, password, menu_message=None,
+                                         points_used=0, points_reservation_id=None):
     if interaction.guild is None:
         try:
             await interaction.response.send_message(
@@ -4176,37 +4380,60 @@ async def create_ticket_and_forge_guest(interaction: discord.Interaction, action
             pass
         return False
     await _safe_defer(interaction)
+    pp_file = paypay_file_for(interaction.guild_id) if amount > 0 else None
+    if amount > 0 and not pp_file:
+        await interaction.followup.send(embed=notice_embed(PAYPAY_UNSET_MSG), ephemeral=True)
+        await reset_menu_message(menu_message)
+        return False
+
+    reservation_id = points_reservation_id or f"tsum-order:{interaction.id}:points"
+    reservation_id = _reserve_tsum_points(interaction.user.id, points_used, reservation_id)
+    if points_used > 0 and not reservation_id:
+        await interaction.followup.send(
+            embed=notice_embed("ポイント残高が不足しているか、確保に失敗しました。注文をやり直してください。"),
+            ephemeral=True)
+        await reset_menu_message(menu_message)
+        return False
+
     if amount > 0:
-        pp_file = paypay_file_for(interaction.guild_id)
-        if not pp_file:
-            await interaction.followup.send(embed=notice_embed(PAYPAY_UNSET_MSG), ephemeral=True)
-            await reset_menu_message(menu_message)
-            return False
-        async with paypay_lock:
-            if _is_link_consumed(paypay_link):
-                await interaction.followup.send(
-                    embed=notice_embed("この支払いは既に処理済みです。届いていない場合はオーナーにご連絡ください。"), ephemeral=True)
-                return False
-            pres = await _run_paypay_helper_dict("verify_receive", paypay_link, str(int(amount)), pp_file)
-            if pres.get("ok"):
-                _mark_link_consumed(paypay_link)
+        try:
+            async with paypay_lock:
+                if _is_link_consumed(paypay_link):
+                    _release_tsum_points(reservation_id)
+                    await interaction.followup.send(
+                        embed=notice_embed("この支払いは既に処理済みです。届いていない場合はオーナーにご連絡ください。"), ephemeral=True)
+                    return False
+                pres = await _run_paypay_helper_dict("verify_receive", paypay_link, str(int(amount)), pp_file)
+                if pres.get("ok"):
+                    _commit_tsum_points(reservation_id)
+                    try:
+                        _mark_link_consumed(paypay_link)
+                    except Exception as exc:
+                        print(f"[paypay] 受領済リンクの記録に失敗: {type(exc).__name__}", flush=True)
+        except Exception:
+            _release_tsum_points(reservation_id)
+            raise
         if pres.get("held"):
             await interaction.followup.send(
                 embed=_hold_embed(),
                 view=TsumHoldApproveView(create_ticket_and_forge_guest, dict(
                     action=action, val=val, amount=amount, paypay_link=paypay_link,
-                    migration_id=migration_id, password=password, menu_message=menu_message)),
+                    migration_id=migration_id, password=password, menu_message=menu_message,
+                    points_used=points_used, points_reservation_id=reservation_id)),
                 ephemeral=True)
             return False
         if not pres.get("ok"):
+            _release_tsum_points(reservation_id)
             await interaction.followup.send(
                 embed=notice_embed(pres.get("msg") or "PayPayの受け取りに失敗しました。"), ephemeral=True)
             await reset_menu_message(menu_message)
             return False
 
+    _commit_tsum_points(reservation_id)
+
     th = await open_ticket(interaction, ticket_thread_name(action, val))
     await interaction.followup.send(f"チケット作成: {ticket_link(th)}", ephemeral=True)
-    await send_ticket_header(th, interaction.user, action, val, amount, paypay_link)
+    await send_ticket_header(th, interaction.user, action, val, amount, paypay_link, points_used)
     await reset_menu_message(menu_message)
     okey = f"{interaction.id}"
     ACTIVE_ORDERS[okey] = {"user": str(interaction.user), "action": action, "val": val,
@@ -4216,7 +4443,7 @@ async def create_ticket_and_forge_guest(interaction: discord.Interaction, action
         ok, _text, info = await _do_forge_guest(th, interaction.user, migration_id, password, **{action: val})
     finally:
         ACTIVE_ORDERS.pop(okey, None)
-    print(f"[注文/guest] {interaction.user} {action} {val} ¥{amount} → "
+    print(f"[注文/guest] {interaction.user} {action} {val} PayPay¥{amount} / {points_used}pt → "
           f"{'成功' if ok else '失敗'} moved={info.get('moved')}", flush=True)
     if info.get("new_id"):
         try:
@@ -4228,9 +4455,9 @@ async def create_ticket_and_forge_guest(interaction: discord.Interaction, action
         except Exception:
             pass
     if ok:
-        if amount > 0:
-            record_sale(interaction.user.id, action, amount)
-        await post_public_result(interaction.guild, interaction.user, action, val, amount)
+        if amount > 0 or points_used > 0:
+            record_sale(interaction.user.id, action, amount, points_used)
+        await post_public_result(interaction.guild, interaction.user, action, val, amount, points_used)
     else:
         if not info.get("moved"):
             await send_guest_retry_prompt(th, interaction.user.id, action, val, amount)
