@@ -151,7 +151,7 @@ async def setup_hook():
         ("points_and_referrals", "points_and_referrals.json"),
     ])
     # 本体側の自販機機能と有料自販機Cogを読み込む
-    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog", "Cogs.mail", "Cogs.points"]
+    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog", "Cogs.mail", "Cogs.netflix_panel", "Cogs.points"]
     for extension in extensions:
         try:
             await bot.load_extension(extension)
