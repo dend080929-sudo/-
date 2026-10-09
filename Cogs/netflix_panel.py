@@ -85,7 +85,7 @@ class NetflixPanel(commands.Cog):
             title="🎬 Netflix クッキーパネル",
             description="下記ボタンを押してクッキーを入力してください\n"
                         "生成されるリンクでNetflixにログインできます",
-            color=discord.Colour.red(）
+            color=discord.Colour.red()
         )
         await target.send(embed=embed, view=NetflixPanelView())
         await interaction.response.send_message("✅ パネルを設置しました", ephemeral=True)
