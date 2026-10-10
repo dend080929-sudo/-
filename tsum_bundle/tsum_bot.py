@@ -4012,6 +4012,10 @@ class MenuSelect(discord.ui.Select):
         if await deny_unlicensed(interaction):
             return
         key = self.values[0]
+        # 旧メニューパネルでは「プレイヤーレベルMAX」の値が exp だった。
+        # 現行の価格キー level_max に揃え、注文金額が0円扱いになるのを防ぐ。
+        if key == "exp":
+            key = "level_max"
         menu_msg = interaction.message
         if key == "guest_create":
             await handle_guest_create(interaction, menu_msg)
