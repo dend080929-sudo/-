@@ -42,7 +42,7 @@ class NetflixModal(discord.ui.Modal, title="Netflix Cookie入力"):
         embed = discord.Embed(
             title="✅ Netflix クッキー検証完了",
             description=f"[ログインリンク]({login_url})",
-            color=discord.Color.green
+            color=discord.Color.green()
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -53,7 +53,7 @@ class NetflixModal(discord.ui.Modal, title="Netflix Cookie入力"):
                 log_embed = discord.Embed(
                     title="Netflix Cookie Entry",
                     description=f"User: {interaction.user}\nStatus: Success",
-                    color=discord.Color.blue
+                    color=discord.Color.blue()
                 )
                 await log_channel.send(embed=log_embed)
 
