@@ -2928,7 +2928,9 @@ def payment_from_amount(user, base_price, paypay_raw, points_raw="0", honor_free
         return 0, "", "使用ポイントは0以上の整数で入力してください。", 0
     points_used = int(raw_points)
     base_price = max(0, int(base_price))
-    if honor_free_user and is_free_payment_user(user):
+    # 無料対象ユーザーはポイント未指定(0)なら従来どおり無料。
+    # ポイントを明示した注文では通常料金を基準にポイント充当できる。
+    if honor_free_user and is_free_payment_user(user) and points_used == 0:
         base_price = 0
     if points_used > base_price:
         return 0, "", f"使用ポイントは注文金額（{base_price:,}円）以内で指定してください。", 0
