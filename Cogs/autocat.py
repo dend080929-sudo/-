@@ -542,6 +542,8 @@ class AutoCatCog(commands.Cog):
                     channel = self.bot.get_channel(int(channel_id))
                     if channel is None:
                         channel = await self.bot.fetch_channel(int(channel_id))
+                else:
+                    print(f"[AUTOCAT DISCORD] achievement channel is not configured guild={guild.id}")
             except Exception as exc:
                 print(f"[AUTOCAT DISCORD] achievement channel lookup failed: {type(exc).__name__}")
 
@@ -555,6 +557,7 @@ class AutoCatCog(commands.Cog):
             achievement_number = max(0, int(current or 0))
 
             if channel is None:
+                print(f"[AUTOCAT DISCORD] achievement post skipped: no channel guild={getattr(guild, 'id', None)}")
                 return
 
             display_name = str(getattr(user, "display_name", None) or getattr(user, "name", "利用者"))
@@ -599,7 +602,7 @@ class AutoCatCog(commands.Cog):
                         except discord.HTTPException as rename_exc:
                             print(f"[AUTOCAT DISCORD] achievement channel rename failed: {getattr(rename_exc, 'status', '?')}")
             except Exception as exc:
-                print(f"[AUTOCAT DISCORD] achievement post failed: {type(exc).__name__}")
+                print(f"[AUTOCAT DISCORD] achievement post failed: {type(exc).__name__}: {exc}")
 
     async def _send_result(self, user: discord.abc.User, result: dict, operation: str, interaction: discord.Interaction):
         status = str(result.get("status") or "unknown")

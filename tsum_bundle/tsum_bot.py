@@ -46,6 +46,15 @@ def load_config():
 
 CONFIG = load_config()
 try:
+    _guild_setting_keys = list((CONFIG.get("guild_settings") or {}).keys())
+    print(
+        f"[tsum] 実績設定: public_result_channel_id={CONFIG.get('public_result_channel_id')!r}, "
+        f"achievement_channel_id={CONFIG.get('achievement_channel_id')!r}, "
+        f"guild_settings={_guild_setting_keys[:20]}"
+    )
+except Exception as _config_log_exc:
+    print(f"[tsum] 実績設定ログ失敗: {type(_config_log_exc).__name__}")
+try:
     tsum_login.resolve_appver()
 except Exception:
     pass
@@ -3422,7 +3431,7 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
 
     channel_id = guild_setting(guild.id, "public_result_channel_id") if guild else None
     if not guild or not channel_id:
-        _dbg(f"[public_result] 投稿先未設定 guild={getattr(guild, 'id', None)}")
+        print(f"[public_result] 投稿先未設定 guild={getattr(guild, 'id', None)}", flush=True)
         return
     try:
         channel_id = int(channel_id)
@@ -3437,7 +3446,7 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
         try:
             channel = await bot.fetch_channel(channel_id)
         except Exception as exc:
-            _dbg(f"[public_result] 投稿先チャンネル取得失敗 id={channel_id}: {type(exc).__name__}: {exc}")
+            print(f"[public_result] 投稿先チャンネル取得失敗 id={channel_id}: {type(exc).__name__}: {exc}", flush=True)
             return
 
     emb = discord.Embed(color=0x2ecc71)
@@ -3458,7 +3467,7 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
         # 本文のメンション(通知)はしない。埋め込み内の表示のみ（通知は飛ばない）。
         await channel.send(embed=emb, allowed_mentions=discord.AllowedMentions.none())
     except Exception as e:
-        _dbg(f"[public_result] send failed channel={channel_id}: {type(e).__name__}: {e}")
+        print(f"[public_result] send failed channel={channel_id}: {type(e).__name__}: {e}", flush=True)
 
 def ticket_owner_user(guild, owner_id, fallback):
     try:
