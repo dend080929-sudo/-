@@ -146,9 +146,9 @@ class CategorySelect(discord.ui.Select):
     def __init__(self, wizard: "AutoCatWizard"):
         self.wizard = wizard
         super().__init__(
-            placeholder="代行するカテゴリ（複数選択可）",
+            placeholder="代行するカテゴリ（最大4つ・複数選択可）",
             min_values=1,
-            max_values=len(CATALOG),
+            max_values=min(4, len(CATALOG)),
             options=[
                 discord.SelectOption(label=v[0], value=k, default=k in wizard.categories)
                 for k, v in CATALOG.items()
@@ -161,32 +161,17 @@ class CategorySelect(discord.ui.Select):
         removed = self.wizard.categories - chosen
         for key in removed:
             self.wizard.selected[key].clear()
-        added = chosen - self.wizard.categories
         self.wizard.categories = chosen
-        self.wizard.remove_item(self)
-        self.wizard.add_item(CategorySelect(self.wizard))
+        for child in tuple(self.wizard.children):
+            if isinstance(child, (CategorySelect, OperationSelect)):
+                self.wizard.remove_item(child)
+        for row, key in enumerate(category for category in CATALOG if category in chosen):
+            self.wizard.add_item(ItemSelect(self.wizard, key, row=row))
         await interaction.response.edit_message(content=self.wizard.summary(), view=self.wizard)
-        for key in removed:
-            message = self.wizard.category_messages.pop(key, None)
-            if message is not None:
-                try:
-                    await message.delete()
-                except discord.HTTPException:
-                    pass
-        for key in CATALOG:
-            if key not in added:
-                continue
-            message = await interaction.followup.send(
-                content=self.wizard.category_prompt(key),
-                view=CategoryItemView(self.wizard, key),
-                ephemeral=True,
-                wait=True,
-            )
-            self.wizard.category_messages[key] = message
 
 
 class ItemSelect(discord.ui.Select):
-    def __init__(self, wizard: "AutoCatWizard", category_key: str):
+    def __init__(self, wizard: "AutoCatWizard", category_key: str, *, row: int):
         self.wizard = wizard
         self.category_key = category_key
         title, items = CATALOG[category_key]
@@ -200,39 +185,18 @@ class ItemSelect(discord.ui.Select):
             min_values=0,
             max_values=len(options),
             options=options,
-            row=0,
+            row=row,
         )
 
     async def callback(self, interaction: discord.Interaction):
         self.wizard.selected[self.category_key] = set(self.values)
-        view = self.view
-        if isinstance(view, CategoryItemView):
-            view.refresh_select()
+        self.wizard.remove_item(self)
+        row = next(index for index, key in enumerate(category for category in CATALOG if category in self.wizard.categories) if key == self.category_key)
+        self.wizard.add_item(ItemSelect(self.wizard, self.category_key, row=row))
         await interaction.response.edit_message(
-            content=self.wizard.category_prompt(self.category_key),
-            view=view,
+            content=self.wizard.summary(),
+            view=self.wizard,
         )
-        await self.wizard.update_main_message()
-
-
-class CategoryItemView(discord.ui.View):
-    def __init__(self, wizard: "AutoCatWizard", category_key: str):
-        super().__init__(timeout=900)
-        self.wizard = wizard
-        self.category_key = category_key
-        self.add_item(ItemSelect(wizard, category_key))
-
-    def refresh_select(self):
-        for child in tuple(self.children):
-            if isinstance(child, ItemSelect):
-                self.remove_item(child)
-        self.add_item(ItemSelect(self.wizard, self.category_key))
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.wizard.owner_id:
-            await interaction.response.send_message("この注文を開始した本人だけ操作できます。", ephemeral=True)
-            return False
-        return True
 
 
 class AutoCatWizard(discord.ui.View):
@@ -243,8 +207,6 @@ class AutoCatWizard(discord.ui.View):
         self.operation = "daiko"
         self.categories: set[str] = set()
         self.selected: dict[str, set[str]] = {key: set() for key in CATALOG}
-        self.category_messages: dict[str, discord.InteractionMessage] = {}
-        self.main_message: discord.InteractionMessage | None = None
         self.add_item(OperationSelect(self))
         self.add_item(CategorySelect(self))
 
@@ -261,29 +223,13 @@ class AutoCatWizard(discord.ui.View):
         chosen_categories = "、".join(CATALOG[key][0] for key in CATALOG if key in self.categories) or "未選択"
         status += f"\n選択カテゴリ: {chosen_categories}"
         if self.categories and self.operation != "clone":
-            status += "\n選択したカテゴリごとの項目メニューから、それぞれ代行内容を選択してください。"
+            status += "\n下の各カテゴリのドロップダウンから代行内容を選択してください。"
         unit_price = int(getattr(autocat, "AUTOCAT_ITEM_PRICE_YEN", 50)) if autocat else 50
         status += f"\n\n初回は成功3回まで無料。その後は1項目{unit_price}円です。VIPロール保持者は無料です。"
         return f"## にゃんこ代行自販機\nサービス: **{operation_label}**\n{status}"
 
-    def category_prompt(self, category_key: str) -> str:
-        count = sum(len(values) for values in self.selected.values())
-        return (
-            f"## {CATALOG[category_key][0]}の代行項目\n"
-            "このカテゴリで代行したい項目をすべて選択してください。\n"
-            f"全カテゴリの選択項目数: **{count}個**"
-        )
-
     async def refresh(self, interaction: discord.Interaction):
         await interaction.response.edit_message(content=self.summary(), view=self)
-
-    async def update_main_message(self):
-        if self.main_message is None:
-            return
-        try:
-            await self.main_message.edit(content=self.summary(), view=self)
-        except discord.HTTPException:
-            pass
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -487,7 +433,6 @@ class AutoCatCog(commands.Cog):
             view=view,
             ephemeral=not public,
         )
-        view.main_message = await interaction.original_response()
 
     async def begin_order(self, interaction: discord.Interaction, endpoint: str, payload: dict, operation: str):
         client = AutoCatClient(interaction.user)
