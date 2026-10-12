@@ -4,6 +4,7 @@ import asyncio
 import copy
 import hashlib
 import io
+import os
 import secrets
 import time
 
@@ -316,6 +317,70 @@ class PendingOrder:
 class AutoCatCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._auto_install_lock = asyncio.Lock()
+        self._auto_install_done = False
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Install/reuse the public panel in the configured channel on startup."""
+        if self._auto_install_done:
+            return
+        raw_channel_id = (os.getenv("AUTOCAT_PANEL_CHANNEL_ID") or "").strip()
+        if not raw_channel_id:
+            return
+        try:
+            channel_id = int(raw_channel_id)
+            if channel_id <= 0:
+                raise ValueError("channel id must be positive")
+        except ValueError:
+            print("[AUTOCAT DISCORD] AUTOCAT_PANEL_CHANNEL_ID is invalid; automatic panel installation skipped")
+            self._auto_install_done = True
+            return
+
+        async with self._auto_install_lock:
+            if self._auto_install_done:
+                return
+            channel = self.bot.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(channel_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                    print(f"[AUTOCAT DISCORD] auto-install channel lookup failed: {type(exc).__name__}")
+                    return
+            if not hasattr(channel, "send") or not hasattr(channel, "history"):
+                print("[AUTOCAT DISCORD] configured auto-install target is not a message channel")
+                self._auto_install_done = True
+                return
+
+            view = AutoCatPanelView(self)
+            try:
+                async for message in channel.history(limit=50):
+                    if message.author.id != self.bot.user.id:
+                        continue
+                    has_autocat_button = any(
+                        getattr(component, "custom_id", None) == "autocat_vending:open"
+                        for row in message.components
+                        for component in getattr(row, "children", ())
+                    )
+                    if has_autocat_button:
+                        await message.edit(content=self._panel_text(), view=view)
+                        self._auto_install_done = True
+                        print(f"✅ AutoCat vending panel reused in channel {channel_id}")
+                        return
+                await channel.send(self._panel_text(), view=view)
+                self._auto_install_done = True
+                print(f"✅ AutoCat vending panel automatically installed in channel {channel_id}")
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                print(f"[AUTOCAT DISCORD] auto-install send/history failed: {type(exc).__name__}")
+
+    @staticmethod
+    def _panel_text() -> str:
+        price = int(getattr(autocat, "AUTOCAT_ITEM_PRICE_YEN", 50)) if autocat else 50
+        return (
+            "## にゃんこ代行自販機\n"
+            "ボタンからサービス・項目を選び、注文と決済をDiscord内で進められます。\n"
+            f"初回成功3回まで無料、以後1項目{price}円。VIPロール保持者は無料です。"
+        )
 
     async def show_panel(self, interaction: discord.Interaction, *, public: bool = False):
         if not _backend_ready():
@@ -434,7 +499,7 @@ class AutoCatCog(commands.Cog):
             await interaction.response.send_message("AutoCatの準備ができていません。", ephemeral=True)
             return
         await interaction.response.send_message(
-            f"## にゃんこ代行自販機\nボタンからサービス・項目を選び、注文と決済をDiscord内で進められます。\n初回成功3回まで無料、以後1項目{int(getattr(autocat, 'AUTOCAT_ITEM_PRICE_YEN', 50))}円。VIPロール保持者は無料です。",
+            self._panel_text(),
             view=AutoCatPanelView(self),
             ephemeral=False,
         )
