@@ -6,6 +6,7 @@ import hashlib
 import io
 import os
 import secrets
+import sys
 import time
 
 import discord
@@ -385,6 +386,7 @@ class AutoCatCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._auto_install_lock = asyncio.Lock()
+        self._achievement_lock = asyncio.Lock()
         self._auto_install_done = False
 
     @commands.Cog.listener()
@@ -521,6 +523,84 @@ class AutoCatCog(commands.Cog):
         except discord.HTTPException:
             pass
 
+    async def _post_public_achievement(self, user, result: dict, operation: str, interaction: discord.Interaction):
+        """Post successful AutoCat jobs in the Tsum-style public achievement channel."""
+        tsum = sys.modules.get("tsum_bot")
+        guild = getattr(interaction, "guild", None)
+        channel = None
+        if tsum and guild:
+            try:
+                channel_id = tsum.guild_setting(guild.id, "public_result_channel_id")
+                if channel_id:
+                    channel = self.bot.get_channel(int(channel_id))
+                    if channel is None:
+                        channel = await self.bot.fetch_channel(int(channel_id))
+            except Exception as exc:
+                print(f"[AUTOCAT DISCORD] achievement channel lookup failed: {type(exc).__name__}")
+
+        async with self._achievement_lock:
+            current = None
+            if tsum:
+                try:
+                    counter_id = tsum.CONFIG.get("achievement_channel_id")
+                    counter_channel = None
+                    if counter_id:
+                        counter_channel = self.bot.get_channel(int(counter_id))
+                        if counter_channel is None:
+                            counter_channel = await self.bot.fetch_channel(int(counter_id))
+                    if counter_channel is not None:
+                        current = await tsum._achv_get_count(counter_channel)
+                    elif channel is not None:
+                        current = await tsum._achv_count_messages(channel)
+                except Exception as exc:
+                    print(f"[AUTOCAT DISCORD] achievement counter lookup failed: {type(exc).__name__}")
+                if not isinstance(current, int):
+                    current = tsum.achievement_count()
+                current = max(0, int(current or 0))
+                try:
+                    tsum.set_achievement_count(current)
+                    achievement_number = int(tsum.increment_achievement())
+                except Exception:
+                    achievement_number = current + 1
+                tsum.request_achievement_update()
+            else:
+                current = await tsum._achv_count_messages(channel) if channel else 0
+                achievement_number = max(0, int(current or 0)) + 1
+
+            if channel is None:
+                return
+
+            display_name = str(getattr(user, "display_name", None) or getattr(user, "name", "利用者"))
+            avatar = getattr(getattr(user, "display_avatar", None), "url", None)
+            embed = discord.Embed(color=0x2ECC71)
+            if avatar:
+                embed.set_author(name=display_name, icon_url=avatar)
+                embed.set_thumbnail(url=avatar)
+            else:
+                embed.set_author(name=display_name)
+            item_count = max(1, int(result.get("billing_item_count") or 1))
+            method = str(result.get("billing_method") or "").lower()
+            amount = max(0, int(result.get("billing_amount_yen") or 0))
+            if method == "points":
+                payment_text = f"**支払い**\n**{amount:,}ポイント**"
+            elif method == "paypay":
+                payment_text = f"**金額**\n**¥{amount:,}**\n**支払い方法**\nPayPay"
+            elif method == "vip":
+                payment_text = "**金額**\n**無料**\n**利用区分**\nVIP"
+            elif method == "free":
+                payment_text = "**金額**\n**無料**\n**利用区分**\n初回無料枠"
+            else:
+                payment_text = "**金額**\n**無料**"
+            embed.description = (
+                f"**ご利用者**\n**{getattr(user, 'mention', display_name)}**\n"
+                f"**注文内容**\n**{OPERATION_LABELS[operation]}（{item_count}項目）**\n"
+                f"**実績番号**\n**-{achievement_number:02d}**\n{payment_text}"
+            )
+            try:
+                await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            except Exception as exc:
+                print(f"[AUTOCAT DISCORD] achievement post failed: {type(exc).__name__}")
+
     async def _send_result(self, user: discord.abc.User, result: dict, operation: str, interaction: discord.Interaction):
         status = str(result.get("status") or "unknown")
         if status != "done":
@@ -558,6 +638,7 @@ class AutoCatCog(commands.Cog):
                 await interaction.followup.send(embed=embed, files=files, ephemeral=True)
             except discord.HTTPException:
                 print(f"[AUTOCAT DISCORD] unable to deliver success result for {user.id}")
+        await self._post_public_achievement(user, result, operation, interaction)
 
     @app_commands.command(name="にゃんこ自販機設置", description="AutoCatのDiscord注文パネルをこのチャンネルに設置します")
     @app_commands.checks.has_permissions(administrator=True)

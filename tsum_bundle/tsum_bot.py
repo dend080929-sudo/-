@@ -1243,7 +1243,7 @@ async def _achv_apply_name():
     count = await _achv_get_count(channel)
     if count is None:
         return "fail"                      # 数えられなければ名前を変えない
-    new_name = f"{_achv_base_name(channel.name)}-{count}"
+    new_name = f"{_achv_base_name(channel.name)}-{count:02d}"
     if channel.name == new_name:
         return "noop"  # 既に最新 → 枠を消費しない
     try:
@@ -4764,7 +4764,7 @@ async def slash_public_result(interaction: discord.Interaction, channel: discord
 
 
 @bot.tree.command(name="ツムツム実績カウンター設定",
-                  description="完了件数をチャンネル名の末尾(-1234)に表示するチャンネルを設定します")
+                  description="完了件数をチャンネル名の末尾(-00形式)に表示するチャンネルを設定します")
 @app_commands.rename(channel="チャンネル")
 @app_commands.describe(channel="件数を名前に付けるチャンネル。空欄で解除")
 async def slash_achievement_channel(interaction: discord.Interaction, channel: discord.abc.GuildChannel = None):
@@ -4777,7 +4777,7 @@ async def slash_achievement_channel(interaction: discord.Interaction, channel: d
     save_config()
     request_achievement_update()
     await interaction.response.send_message(
-        f"{channel.mention} の名前の末尾に完了件数(-{achievement_count()})を表示します。\n"
+        f"{channel.mention} の名前の末尾に完了件数(-{achievement_count():02d})を表示します。\n"
         "（名前変更は10分に2回までのため、反映まで数分かかることがあります）",
         ephemeral=True)
 
