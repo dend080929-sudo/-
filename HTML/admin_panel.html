@@ -40,6 +40,13 @@
     </div>
   </section>
 
+  <section class="card">
+    <div class="head"><h2>PayPay返金依頼</h2><div class="spacer"></div><button id="refresh-refunds" type="button">更新</button></div>
+    <p>失敗した有料処理の返金依頼です。PayPayで手動返金したあと「返金済みとして記録」を押してください。</p>
+    <div id="refund-message" role="status"></div>
+    <div id="refund-list" class="vip-list"><p>読み込み中...</p></div>
+  </section>
+
   {% if operation %}
   <section class="card">
     <h2>受付内容</h2>
@@ -61,6 +68,47 @@
   {% endif %}
 </main>
 <script>document.querySelectorAll('[data-vip-time]').forEach(el=>el.textContent=new Date(Number(el.dataset.vipTime)*1000).toLocaleString('ja-JP'));</script>
+<script>
+const refundCsrf={{ csrf_token|tojson }};
+const refundList=document.getElementById('refund-list');
+const refundMessage=document.getElementById('refund-message');
+async function loadRefundRequests(){
+  refundMessage.textContent='';refundList.replaceChildren(document.createTextNode('読み込み中...'));
+  try{
+    const response=await fetch('/autocat/api/admin/billing/refunds',{cache:'no-store'});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data.error||'返金依頼を読み込めませんでした。');
+    refundList.replaceChildren();
+    if(!data.requests?.length){refundList.append(document.createTextNode('未処理の返金依頼はありません。'));return;}
+    for(const item of data.requests){
+      const row=document.createElement('div');row.className='vip-row';
+      const details=document.createElement('div');
+      const heading=document.createElement('strong');heading.textContent=`${item.amount_yen}円・${item.site_username||'サイト利用者'}`;
+      const meta=document.createElement('small');meta.textContent=`受付 ${new Date(Number(item.created_at)*1000).toLocaleString('ja-JP')} / ${item.reason||'処理失敗'}`;
+      const job=document.createElement('code');job.textContent=`ジョブID: ${item.job_id}`;
+      details.append(heading,meta,job);
+      const actions=document.createElement('div');actions.style.display='grid';actions.style.gap='6px';
+      for(const [status,label] of [['refunded','返金済みとして記録'],['cancelled','返金しない']]){
+        const button=document.createElement('button');button.type='button';button.textContent=label;
+        button.addEventListener('click',()=>resolveRefund(item.job_id,status,button));actions.append(button);
+      }
+      row.append(details,actions);refundList.append(row);
+    }
+  }catch(error){refundList.replaceChildren();refundMessage.textContent=error.message;refundMessage.className='error';}
+}
+async function resolveRefund(jobId,status,button){
+  if(status==='refunded'&&!confirm('PayPayで実際に返金を完了しましたか？'))return;
+  button.disabled=true;
+  try{
+    const response=await fetch(`/autocat/api/admin/billing/refunds/${encodeURIComponent(jobId)}`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':refundCsrf},body:JSON.stringify({status})});
+    const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||'記録できませんでした。');
+    refundMessage.textContent=status==='refunded'?'返金済みとして記録しました。':'返金依頼を取り消しました。';refundMessage.className='ok';
+    await loadRefundRequests();
+  }catch(error){button.disabled=false;refundMessage.textContent=error.message;refundMessage.className='error';}
+}
+document.getElementById('refresh-refunds').addEventListener('click',loadRefundRequests);
+loadRefundRequests();
+</script>
 {% if operation %}
 <script>
 const operationId={{ operation.operation_id|tojson }};

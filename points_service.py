@@ -186,9 +186,10 @@ def award_purchase_points(user_id: int | str, amount_yen: int, purchase_id: str)
         return int(_user(data, user_id)["points"])
 
 
-def reserve_points(user_id: int | str, amount: int, reservation_id: str) -> bool:
+def reserve_points(user_id: int | str, amount: int, reservation_id: str, *, reason: str = "ポイント値引き") -> bool:
     """購入処理中だけポイントを仮確保する。二重確保と残高不足を原子的に防ぐ。"""
     amount = int(amount)
+    clean_reason = str(reason or "ポイント値引き").strip()[:80] or "ポイント値引き"
     if amount <= 0:
         return True
     with _LOCK:
@@ -198,14 +199,15 @@ def reserve_points(user_id: int | str, amount: int, reservation_id: str) -> bool
         record = _user(data, user_id)
         if int(record.get("points", 0)) < amount:
             return False
-        record["points"] = int(record["points"]) - amount
+        record["points"] = int(record.get("points", 0)) - amount
         record["history"].append({
-            "at": _iso(), "amount": -amount, "reason": "値引きポイント仮確保",
+            "at": _iso(), "amount": -amount,
+            "reason": "値引きポイント仮確保" if clean_reason == "ポイント値引き" else f"{clean_reason}仮確保",
             "transaction_id": reservation_id,
         })
         record["history"] = record["history"][-100:]
         data["transactions"][reservation_id] = {
-            "user_id": str(user_id), "amount": amount, "reason": "ポイント値引き",
+            "user_id": str(user_id), "amount": amount, "reason": clean_reason,
             "status": "reserved", "at": _iso(),
         }
         _save(data)
@@ -241,9 +243,14 @@ def release_reserved_points(reservation_id: str) -> bool:
             return False
         amount = int(tx.get("amount", 0))
         record = _user(data, tx.get("user_id", ""))
+        reason = str(tx.get("reason") or "ポイント値引き")
+        refund_reason = (
+            "決済失敗による値引きポイント返却"
+            if reason == "ポイント値引き" else f"{reason}失敗返却"
+        )
         record["points"] = int(record.get("points", 0)) + amount
         record["history"].append({
-            "at": _iso(), "amount": amount, "reason": "決済失敗による値引きポイント返却",
+            "at": _iso(), "amount": amount, "reason": refund_reason,
             "transaction_id": f"{reservation_id}:release",
         })
         record["history"] = record["history"][-100:]

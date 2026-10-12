@@ -48,6 +48,14 @@
 
 `/設定`、`/チケット設置`、`/認証設置`、`/お知らせ設定`、`/お知らせ確認`、`/お知らせテスト`、`/お知らせ解除`、`/バックアップ`、`/一括呼び戻し`、`/発言`、`/ヘルプ`、`/にゃんこ代行`、`/チャンネル再作成`
 
+### AutoCat JP 代行課金
+
+- 利用者の認証と無料利用回数はDiscord OAuthユーザーIDで管理します。サイト独自アカウント登録・Discord連携は代行利用に不要です。
+- 通常利用者は初回3回まで無料（代行・作成・複製を合算、失敗時は回数を返却）。以後は選択項目数×50円です。作成は出力アカウント数分、複製は複製数分を計上します。
+- 支払いは共通ポイント（1ポイント=1円）またはPayPay。ポイントはDiscordログイン中の同じDiscord IDから予約し、処理成功で確定、失敗時に返却します。PayPayはリンク金額を照合して受領し、失敗時は管理者へ手動返金依頼を送ります。
+- VIPは`AUTOCAT_VIP_GUILD_ID`のサーバーで`AUTOCAT_VIP_ROLE_ID`を持つユーザーです。Discord APIで確認し、VIPは無料利用（単価請求なし）となります。支払い確認後に管理者がDiscord上でロールを付与・解除してください。Discord API障害や設定不足時はVIPを認めません。
+- 無料回数・PayPay使用済みリンク・返金依頼の永続台帳はGoogle Sheetsに保存し、RenderではSheets設定と固定の識別鍵が必要です。AutoCatの代行会計はサイトアカウントDBに依存しません。
+
 ### PayPay（`Cogs/paypay.py`）
 
 - PayPayの登録・ログアウト
@@ -98,7 +106,7 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 ### AUTOCAT JP Webアプリ（`autocat_main.py`, `HTML/`, `static/`, `ACCOUNT/`, `CHAT/`）
 
 - にゃんこ大戦争アカウントの代行・新規作成・複製処理とジョブ状況確認
-- 無料利用枠、招待特典、VIP向け画面・購入申請、利用状況・管理ページ
+- 初回3回無料（成功時のみ消費）、以後は項目ごとの従量課金、VIP向け画面・購入申請、利用状況・管理ページ
 - Discord OAuthログイン、サイトアカウント登録、VIP購入チケット/管理画面
 - AUTOCATチャット、DM、モデレーション、Web Push
 - ゲーム/キャラクターメタデータを使う画面とアクセス制御
@@ -177,7 +185,8 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 | 変数 | 必須 | 既定値 / 説明 |
 |---|---:|---|
 | `PUBLIC_BASE_URL` | 外部URL利用時 | AUTOCATの公開URL。Renderでは`RENDER_EXTERNAL_URL`から自動補完。未設定時のコード既定値は`https://autocat.jp`。末尾`/`は除去されます。|
-| `VIP_GUILD_ID` | 任意 | VIP/招待等の対象DiscordサーバーID。未設定なら`DISCORD_GUILD_ID`から設定。|
+| `AUTOCAT_VIP_GUILD_ID` | AutoCat VIP利用時に必須 | VIPロールを付与するDiscordサーバーID。未設定なら`VIP_GUILD_ID`、次に`DISCORD_GUILD_ID`を参照。|
+| `AUTOCAT_VIP_ROLE_ID` | AutoCat VIP利用時に必須 | 有料VIP利用者へ付与するDiscordロールID。Botが対象サーバーに参加している必要があります。ユーザーがこのロールを持つかDiscord APIで確認し、API障害時はVIP権限を付与しません。|
 | `VIP_PLAN_LABEL` | 任意 | Web画面のプラン表示名。既定`VIPプラン`。|
 | `VIP_PRICE_30` | 任意 | 30日プランの価格（円）。既定`300`。1〜1,000,000の整数。|
 | `VIP_PRICE_60` | 任意 | 60日プランの価格（円）。既定`600`。|
@@ -186,8 +195,10 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 | `FLASK_SECRET_KEY` | **本番では必須** | Cookieセッション・内部暗号化に使うランダムで固定の秘密鍵。再起動をまたいで同じ値を使います。未設定時は互換用フォールバックがありますが、本番では明示してください。|
 | `SESSION_COOKIE_SECURE` | 任意 | `1`（既定）ならSecure Cookieを有効化。HTTPSを使わないローカル開発のみ`0`。|
 | `IDENTITY_HASH_KEY` | 推奨 | 無料利用者識別・招待等の安定したHMAC鍵。未設定なら`FLASK_SECRET_KEY`を使用。固定値を保つこと。|
+| `AUTOCAT_BILLING_SHEET` | 任意 | 課金台帳のGoogle Sheetsワークシート接頭辞。既定`autocat_billing`。`<値>_meta`、`<値>_a`、`<値>_b`の3シートを作成します。|
+| `AUTOCAT_PAYPAY_ACCOUNT_ID` | 任意 | AUTOCAT料金を受け取るPayPay口座のDiscordユーザーID。未設定なら`ADMIN_USER`のPayPay登録口座を使います。口座は既存の`/ペイペイログイン`で登録します。|
 | `CHAT_IDENTITY_HASH_KEY` | 任意 | チャット匿名ID用の専用鍵。未設定なら`IDENTITY_HASH_KEY`または`FLASK_SECRET_KEY`。|
-| `ACCOUNT_IDENTITY_HASH_KEY` | 任意 | サイトアカウント関連の識別用専用鍵。未設定なら共通鍵を使用。|
+| `ACCOUNT_IDENTITY_HASH_KEY` | 任意 | 既存サイトアカウント機能の識別用専用鍵。AutoCat代行の利用者識別・ポイント・VIP判定には使用しません。|
 | `ADMIN_USER` | 管理機能利用時 | 管理者のDiscordユーザーID（数字）。管理チャット管理者にも使用。旧名`Admin_USER`は互換用。|
 | `ADMIN_SNAPSHOT_KEY` | 管理スナップショット利用時 | 管理バックアップ/スナップショット暗号化用の秘密鍵。未設定なら`FLASK_SECRET_KEY`から導出。|
 | `DISABLE_BACKGROUND_UPDATER` | 任意 | `1`で起動時のバックグラウンドWebデータ更新スレッドを無効化。既定では有効。|
@@ -282,6 +293,16 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 5. 一部のワークシートは起動/保存時に自動作成されます。既存データの移行時は事前バックアップを取ってください。
 
 主なワークシート名：`oauth_users`、`server_config`、`paid_vending_items`、`paid_stock_contents`、`paid_stock_notifications`、`paid_coupons`、`paid_role_assignments`、`paid_used_paypay_links`、`paypay_accounts`、`kyash_accounts`、`mail_accounts`、`points_and_referrals`。ストアはJSON文字列をセルA1へ保存し、ローカルJSONをフォールバックとして使います。
+
+### AUTOCAT利用料金
+
+- **初回の3回の成功した代行実行**は無料です。失敗した処理は回数を消費せず、作成・複製を複数個まとめて実行した場合も、初回無料枠では1ジョブとして数えます。
+- 無料枠を使い切った後は、選択した項目1つにつき50円です。新規作成は選択項目数×作成数、複製は複製数で計算します。例：3項目を1回実行する場合は150円。
+- 支払いは**共通ポイント（1ポイント＝1円）**または**PayPayリンク**です。ポイント利用には、サイトアカウントとDiscordアカウントをマイアカウント画面で連携してください。PayPay利用時はサイトアカウントへのログインが必要です。
+- 有料VIPを管理者がサイトアカウントへ付与すると、契約中は代行・作成・複製が無料・無制限です。招待報酬、週次無料枠、VIP無料体験は停止しています。
+- 代行失敗時は予約ポイントを返却します。PayPay受領後に処理が失敗した場合は自動送金返金せず、管理者へDiscord DMで手動返金依頼を送り、管理画面 `/autocat/admin/panel` から返金済みまたは取消を記録します。
+- 本番のRender環境では課金台帳の永続化に**Google Sheets**と固定の`IDENTITY_HASH_KEY`または`FLASK_SECRET_KEY`が必要です。デプロイ後、同じスプレッドシートに`autocat_billing_meta`、`autocat_billing_a`、`autocat_billing_b`（または`AUTOCAT_BILLING_SHEET`で指定した接頭辞のタブ）が作られます。Sheets設定または固定鍵がない場合は課金処理を安全側で停止します。
+- 課金台帳はサイトアカウントID、ユーザー名、Discord ID、返金額・理由、PayPayリンクのハッシュを記録します。PayPayリンク本文やPayPayパスワードは課金台帳に保存しません。シートの共有権限を必要最小限にしてください。
 
 `GOOGLE_CREDENTIALS_JSON`がない場合、`persistent_store.py`経由の機能は主にローカルJSONへフォールバックします。ただし、OAuth認証ユーザーの`oauth_users`データはSheetsクライアントがないと永続保存できません。認証、売上、在庫、購入者情報などを継続利用する本番環境ではGoogle Sheets設定を行ってください。
 
@@ -394,11 +415,14 @@ Tsum設定ファイルが不要な環境ではSecret Fileの`-v`と`TSUM_BOT_CON
 |---|---|---|
 | Discord OAuth認証ユーザー | Google Sheets `oauth_users` | Token/Refresh Tokenを含む機微情報。閲覧権限を厳格に管理。Sheets設定がないと永続保存できません。|
 | Botサーバー設定、自販機、在庫本文、決済アカウント、ポイント/紹介、メール設定 | Google Sheetsの各Store + ローカルJSONフォールバック | Sheets側の値を優先して読み込みます。Sheetsとローカル双方のバックアップを推奨。|
-| AUTOCAT利用回数、アカウント、チャット、招待、操作復旧情報 | `RUNTIME_DATA_DIR`配下のSQLite/JSON | 永続ディスクがないと再デプロイ/インスタンス交換で失われる可能性があります。|
+| AUTOCAT課金台帳（初回無料、PayPay重複防止、返金依頼） | Google Sheetsの`autocat_billing_*`行スナップショット + `RUNTIME_DATA_DIR`配下のSQLiteキャッシュ | RenderではSheetsと固定識別鍵が必須。初回無料回数はDiscord ID単位。サービスアカウントには対象スプレッドシートの編集権限が必要です。|
+| AUTOCAT利用回数、チャット、招待、操作復旧情報 | `RUNTIME_DATA_DIR`配下のSQLite/JSON | 現時点では永続ディスクがないと再デプロイ/インスタンス交換で失われる可能性があります。|
 | 本体の告知設定・手動バックアップJSON | `RUNTIME_DATA_DIR`配下 | `/バックアップ`はOAuth認証データをローカルへ出力。保存先は一時ディスクになり得ます。|
 | Tsum設定・LINE認証・セッション・売上・貸出・実行中ジョブ | `tsum_bundle/`配下のJSON等 | 認証情報を含みます。Gitへコミットしないでください。Render Secret Fileは起動時設定の受け渡し用で、アプリの変更を元Secret Fileへ書き戻しません。|
 
-Google Sheetsの保存処理はAPI障害時にログを出してローカルJSONをフォールバックとして使うものがあります。Sheetsとローカルファイルは自動で完全同期されるバックアップではありません。実運用前にリストア手順を用意してください。
+RenderのFree Web Serviceはローカルファイルが再デプロイ・再起動・スピンダウンで消えるため、SQLiteの永続性が必要なデータは外部ストアへ保存してください。AUTOCATの代行利用はサイト独自アカウントDBに依存しません。Discord OAuthで利用者を識別し、VIPロールはDiscord APIで照合、初回無料回数・PayPay重複防止・返金依頼はGoogle Sheets台帳へ保存します。チャット・既存のサイトアカウント機能・操作復旧情報など別SQLiteは個別の保存設計が必要です。
+
+Google Sheetsの通常JSON Storeには、API障害時にローカルJSONへフォールバックするものがあります。Sheetsとローカルファイルは自動で完全同期されるバックアップではありません。実運用前にリストア手順を用意してください。
 
 ## ログとトラブルシューティング
 

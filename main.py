@@ -333,6 +333,8 @@ def home():
 
 @app.route("/healthz", methods=["GET"])
 def health_check():
+    if RENDER_EXTERNAL_URL and AUTOCAT_APP is None:
+        return {"status": "unhealthy", "component": "autocat"}, 503
     return {"status": "ok"}, 200
 
 @app.route("/mail/incoming", methods=["POST"])

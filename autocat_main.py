@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template, session, redirect
+import asyncio
 import os
 import re
 import copy
@@ -13,7 +14,7 @@ import traceback
 import time
 import requests
 from datetime import timedelta
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from flask_limiter import Limiter
@@ -30,6 +31,15 @@ from CHAT.dm_routes import register_dm_routes
 from CHAT.dm_store import DMStore
 from CHAT.moderation_routes import register_moderation_routes
 from DISCORD.discord_log import send_usage_log
+import paypayu
+from autocat_billing import AutocatBillingStore, BillingError, BillingIdentityConflict
+from persistent_store import load_json_store
+from points_service import (
+    commit_reserved_points,
+    get_balance,
+    release_reserved_points,
+    reserve_points,
+)
 from free_usage import (
     FreeUsageError,
     FreeUsageManager,
@@ -104,6 +114,7 @@ MAX_CHAR_LIST = 300          # char_list の最大要素数
 MAX_CHARACTER_SETTINGS = 1000  # レアリティ単位・全871体の名前選択に対応
 MAX_COUNT = 5                # 作成/複製の最大個数
 MAX_LEGEND_SELECTIONS = 5000 # レジェンド系の章/星/ステージ選択数上限
+AUTOCAT_ITEM_PRICE_YEN = 50  # 無料3回終了後の1項目あたり料金
 
 # にゃんこ大戦争 JP 15.5.1。通信・新規作成・複製・ゲームデータ参照で
 # 別々の値を使うと、新キャラ枠や第四形態の判定が旧版へ戻るため一元管理する。
@@ -130,6 +141,8 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+AUTOCAT_VIP_GUILD_ID = (os.getenv("AUTOCAT_VIP_GUILD_ID") or os.getenv("VIP_GUILD_ID") or os.getenv("DISCORD_GUILD_ID") or "").strip()
+AUTOCAT_VIP_ROLE_ID = os.getenv("AUTOCAT_VIP_ROLE_ID", "").strip()
 
 def _positive_env_int(name, fallback):
     try:
@@ -378,6 +391,10 @@ account_store = AccountStore(
     ACCOUNT_DB_PATH,
     os.getenv("ACCOUNT_IDENTITY_HASH_KEY") or _identity_secret,
     vip_plan_prices=VIP_PLAN_PRICES,
+)
+billing_store = AutocatBillingStore(
+    os.path.join(RUNTIME_DATA_DIR, "autocat_billing.db"),
+    _identity_secret,
 )
 
 
@@ -746,10 +763,30 @@ def _settle_job_quota(job: dict | None) -> None:
     if reservation_id:
         try:
             free_usage_manager.settle(str(reservation_id), success=success)
-            _process_invitation_vip_trials()
         except Exception as exc:
             # ジョブ結果は失わせず、次回の状態確認でも冪等に再試行する。
             print(f"[ERROR] free quota settlement {reservation_id}: {type(exc).__name__}")
+    first_free_reservation_id = job.get("first_free_run_reservation_id")
+    if first_free_reservation_id:
+        try:
+            billing_store.settle_free_run(str(first_free_reservation_id), success=success)
+        except Exception as exc:
+            print(f"[ERROR] AUTOCAT free-run settlement: {type(exc).__name__}")
+    points_reservation_id = job.get("points_reservation_id")
+    if points_reservation_id:
+        try:
+            if success:
+                if not commit_reserved_points(str(points_reservation_id)):
+                    print("[ERROR] AUTOCAT point commit returned false")
+            elif not release_reserved_points(str(points_reservation_id)):
+                print("[ERROR] AUTOCAT point release returned false")
+        except Exception as exc:
+            print(f"[ERROR] AUTOCAT point settlement: {type(exc).__name__}")
+    if not success and job.get("billing_method") == "paypay":
+        try:
+            _queue_paypay_refund(job, str(job.get("error") or "代行処理に失敗しました。"))
+        except Exception as exc:
+            print(f"[ERROR] AUTOCAT PayPay refund queue: {type(exc).__name__}")
     trial_reservation_id = job.get("trial_vip_reservation_id")
     if trial_reservation_id:
         try:
@@ -933,16 +970,55 @@ def session_owns_job(job_id: str, job: dict | None = None) -> bool:
 # Discordログイン（チャット・管理者）/ サイトアカウント（VIP）
 # =====================
 def current_user():
-    """Discordログイン中のチャット用ユーザー。VIP判定には使用しない。"""
+    """Discord OAuthで確認した現在の利用者。課金・VIP判定にも使う。"""
     return session.get("discord_user")
 
 
+_vip_role_cache: dict[str, tuple[float, bool]] = {}
+_vip_role_cache_lock = threading.Lock()
+
+
+def discord_vip_role_confirmed(user: dict | None = None) -> bool:
+    """Check the configured Discord role with the bot API; fail closed."""
+    user = user or current_user()
+    user_id = str((user or {}).get("id") or "")
+    if not re.fullmatch(r"\d{15,22}", user_id):
+        return False
+    if not (
+        DISCORD_BOT_TOKEN
+        and re.fullmatch(r"\d{15,22}", AUTOCAT_VIP_GUILD_ID)
+        and re.fullmatch(r"\d{15,22}", AUTOCAT_VIP_ROLE_ID)
+    ):
+        return False
+    now = time.time()
+    with _vip_role_cache_lock:
+        cached = _vip_role_cache.get(user_id)
+        if cached and now - cached[0] < 30:
+            return cached[1]
+    try:
+        response = requests.get(
+            f"{DISCORD_API}/v10/guilds/{AUTOCAT_VIP_GUILD_ID}/members/{user_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            timeout=(5, 10),
+        )
+        if response.status_code == 404:
+            result = False
+        elif response.status_code == 200:
+            roles = response.json().get("roles", [])
+            result = isinstance(roles, list) and AUTOCAT_VIP_ROLE_ID in {str(role) for role in roles}
+        else:
+            print(f"[AUTOCAT VIP] Discord role lookup HTTP {response.status_code}; denying VIP")
+            return False
+        with _vip_role_cache_lock:
+            _vip_role_cache[user_id] = (now, result)
+        return result
+    except Exception as exc:
+        print(f"[AUTOCAT VIP] Discord role lookup failed: {type(exc).__name__}; denying VIP")
+        return False
+
+
 def current_site_user():
-    """サイトアカウント。VIP権限はACCOUNT/account.dbの契約状態から毎回取得する。"""
-    user = account_store.get_account(session.get("site_account_id"))
-    if user and user.get("status") == "active":
-        return user
-    session.pop("site_account_id", None)
+    """Compatibility shim: AutoCat billing no longer requires site accounts."""
     return None
 
 
@@ -965,8 +1041,7 @@ def job_achievement_actor(job_id: str) -> str:
 
 
 def site_vip_confirmed() -> bool:
-    user = current_site_user()
-    return bool(user and user.get("is_vip"))
+    return discord_vip_role_confirmed()
 
 
 def is_admin_user() -> bool:
@@ -1016,7 +1091,7 @@ def auth_login():
         oauth_next = oauth_next[len("/autocat"):]
     elif oauth_next == "/autocat":
         oauth_next = "/"
-    allowed_next = {"/", "/chat", "/chat/admin", "/admin/panel", "/admin/vip"}
+    allowed_next = {"/", "/account", "/chat", "/chat/admin", "/admin/panel", "/admin/vip"}
     session["oauth_next"] = oauth_next if oauth_next in allowed_next else "/chat"
     params = {
         "client_id": DISCORD_CLIENT_ID,
@@ -5182,6 +5257,362 @@ def run_admin_reissue(operation_id: str):
 # =====================
 # APIエンドポイント
 # =====================
+def _billing_item_count(operation_type: str, selected: object, count: int = 1) -> int:
+    """Count selected service items; create/clone counts are multiplied by output count."""
+    if operation_type == "clone":
+        return max(1, min(MAX_COUNT, int(count)))
+    selected_count = 0
+    if isinstance(selected, dict):
+        for group in ("s1", "s2", "s3", "s4"):
+            values = selected.get(group, [])
+            if isinstance(values, list):
+                clean = {value.strip()[:120] for value in values if isinstance(value, str) and value.strip()}
+                selected_count += min(200, len(clean))
+    per_output = max(1, selected_count)
+    if operation_type == "create":
+        return per_output * max(1, min(MAX_COUNT, int(count)))
+    return per_output
+
+
+def _billing_options(item_count: int, discord_user_id: str | None = None) -> dict:
+    discord_user_id = str(discord_user_id or "").strip()
+    authenticated = bool(re.fullmatch(r"\d{15,22}", discord_user_id))
+    points_balance = None
+    if authenticated:
+        try:
+            points_balance = get_balance(discord_user_id)
+        except Exception as exc:
+            print(f"[AUTOCAT BILLING] points quote failed: {type(exc).__name__}")
+    return {
+        "item_count": int(item_count),
+        "unit_price_yen": AUTOCAT_ITEM_PRICE_YEN,
+        "amount_yen": int(item_count) * AUTOCAT_ITEM_PRICE_YEN,
+        "discord_logged_in": authenticated,
+        "discord_login_url": "/autocat/auth/login?next=/autocat/",
+        "points_available": bool(authenticated and points_balance is not None),
+        "points_balance": points_balance,
+        "paypay_available": bool(authenticated and _paypay_credentials()),
+    }
+
+
+def _paypay_credentials() -> dict | None:
+    if not re.fullmatch(r"\d{15,22}", ADMIN_USER):
+        return None
+    account_id = os.getenv("AUTOCAT_PAYPAY_ACCOUNT_ID", ADMIN_USER).strip()
+    if not account_id or len(account_id) > 64:
+        return None
+    try:
+        data = load_json_store("paypay_accounts", "paypay_data.json")
+        credentials = data.get(account_id) if isinstance(data, dict) else None
+        if isinstance(credentials, dict) and all(credentials.get(key) for key in ("phone", "password", "uuid")):
+            return credentials
+    except Exception as exc:
+        print(f"[AUTOCAT PAYPAY] account lookup failed: {type(exc).__name__}")
+    return None
+
+
+async def _receive_autocat_paypay_link(link: str, expected_yen: int, credentials: dict) -> dict:
+    """Verify and receive one PayPay link without logging or persisting the URL."""
+    receiving_started = False
+    try:
+        async with paypayu.PayPayAsync(
+            phone=credentials["phone"],
+            password=credentials["password"],
+            uuid=credentials["uuid"],
+        ) as pp:
+            await pp.login()
+            if not pp.access_token:
+                return {"ok": False, "code": "paypay_login_failed", "error": "管理者のPayPay受取ログインに失敗しました。", "uncertain": False}
+            info = await pp.check_link(link)
+            if not info:
+                return {"ok": False, "code": "paypay_link_invalid", "error": "有効なPayPayリンクを確認できませんでした。", "uncertain": False}
+            payload = info.get("payload", {}) if isinstance(info, dict) else {}
+            data = payload.get("message", {}).get("data", {}) if isinstance(payload, dict) else {}
+            try:
+                amount = int(data.get("amount"))
+            except (TypeError, ValueError):
+                return {"ok": False, "code": "paypay_amount_invalid", "error": "PayPayリンクの金額を確認できませんでした。", "uncertain": False}
+            if amount != int(expected_yen):
+                return {"ok": False, "code": "paypay_amount_mismatch", "error": f"リンクの金額が合計額と一致しません。必要額は{expected_yen:,}円です。", "uncertain": False}
+            initial_status = str(payload.get("orderStatus", "")).upper()
+            if initial_status in {"SUCCESS", "COMPLETED"}:
+                return {"ok": False, "code": "paypay_link_already_used", "error": "このPayPayリンクは既に処理済みの可能性があります。管理者へ確認依頼を送りました。", "uncertain": True}
+            if initial_status != "PENDING":
+                return {"ok": False, "code": "paypay_link_not_pending", "error": "このPayPayリンクは受取可能な状態ではありません。", "uncertain": False}
+            receiving_started = True
+            result = await paypayu.link_rev(
+                link, credentials["phone"], credentials["password"], credentials["uuid"]
+            )
+            if result is True:
+                return {"ok": True}
+            # 既存の自販機と同じ受取保留対策。ブラウザー側の決済待機上限は別途延長する。
+            await asyncio.sleep(60)
+            after = await pp.check_link(link)
+            after_payload = after.get("payload", {}) if isinstance(after, dict) else {}
+            after_status = str(after_payload.get("orderStatus", "")).upper() if isinstance(after_payload, dict) else ""
+            if after_status in {"SUCCESS", "COMPLETED"}:
+                return {"ok": True}
+            return {"ok": False, "code": "paypay_not_received", "error": "PayPay受取を確認できませんでした。受取保留を解除してから再度お試しください。", "uncertain": False}
+    except Exception as exc:
+        print(f"[AUTOCAT PAYPAY] processing failed: {type(exc).__name__}")
+        return {
+            "ok": False,
+            "code": "paypay_status_unknown" if receiving_started else "paypay_unavailable",
+            "error": "PayPay決済状態を確認できませんでした。" if receiving_started else "PayPayへ接続できませんでした。",
+            "uncertain": receiving_started,
+        }
+
+
+def _notify_admin_paypay_refund(refund: dict) -> bool:
+    if not DISCORD_BOT_TOKEN or not re.fullmatch(r"\d{15,22}", ADMIN_USER):
+        return False
+    headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"}
+    try:
+        channel_response = requests.post(
+            f"{DISCORD_API}/v10/users/@me/channels",
+            headers=headers,
+            json={"recipient_id": ADMIN_USER},
+            timeout=(5, 15),
+        )
+        if channel_response.status_code not in (200, 201):
+            print(f"[AUTOCAT REFUND] admin DM channel HTTP {channel_response.status_code}")
+            return False
+        channel_id = str(channel_response.json().get("id") or "")
+        if not channel_id.isdigit():
+            return False
+        username = str(refund.get("site_username") or "未取得")[:100]
+        site_id = str(refund.get("site_public_id") or "未取得")[:32]
+        operation_id = str(refund.get("operation_id") or "未取得")[:80]
+        job_id = str(refund.get("job_id") or "")[:80]
+        discord_id = str(refund.get("discord_user_id") or "未連携")[:32]
+        reason = str(refund.get("reason") or "処理失敗")[:500]
+        content = (
+            "AUTOCAT PayPay手動返金依頼\n"
+            f"金額: {int(refund.get('amount_yen') or 0):,}円\n"
+            f"サイトアカウント: {username} / {site_id}\n"
+            f"Discord ID: {discord_id}\n"
+            f"操作ID: {operation_id}\nジョブID: {job_id}\n"
+            f"理由: {reason}\nPayPayアプリの取引履歴を確認し、手動返金してください。"
+        )
+        message_response = requests.post(
+            f"{DISCORD_API}/v10/channels/{channel_id}/messages",
+            headers=headers,
+            json={"content": content[:1900], "allowed_mentions": {"parse": []}},
+            timeout=(5, 15),
+        )
+        if message_response.status_code not in (200, 201, 204):
+            print(f"[AUTOCAT REFUND] admin DM message HTTP {message_response.status_code}")
+            return False
+        return True
+    except Exception as exc:
+        print(f"[AUTOCAT REFUND] admin notification failed: {type(exc).__name__}")
+        return False
+
+
+_REFUND_DM_FALLBACK_SENT: set[str] = set()
+_REFUND_DM_FALLBACK_LOCK = threading.Lock()
+
+
+def _notify_paypay_refund_fallback(refund: dict) -> None:
+    """Notify once in-process if the durable refund ledger itself is unavailable."""
+    job_id = str(refund.get("job_id") or "")
+    with _REFUND_DM_FALLBACK_LOCK:
+        if job_id in _REFUND_DM_FALLBACK_SENT:
+            return
+        _REFUND_DM_FALLBACK_SENT.add(job_id)
+    if not _notify_admin_paypay_refund(refund):
+        print(f"[AUTOCAT REFUND] urgent manual refund notification failed for job {job_id[:80]}")
+
+
+def _queue_paypay_refund(job: dict, reason: str) -> None:
+    """Persist a manual refund request and privately notify ADMIN_USER once."""
+    amount = int(job.get("billing_amount_yen") or 0)
+    job_id = str(job.get("billing_job_id") or job.get("operation_id") or "")
+    if amount <= 0 or not job_id:
+        return
+    details = {
+        "job_id": job_id,
+        "operation_id": str(job.get("operation_id") or ""),
+        "site_public_id": str(job.get("billing_site_public_id") or ""),
+        "site_username": str(job.get("billing_site_username") or ""),
+        "discord_user_id": str(job.get("billing_discord_user_id") or ""),
+        "amount_yen": amount,
+        "reason": str(reason or "処理失敗")[:1000],
+    }
+    try:
+        refund, _created = billing_store.create_refund_request(**details)
+        should_notify = billing_store.claim_refund_notification(job_id)
+    except Exception as exc:
+        print(f"[AUTOCAT REFUND] durable request failed: {type(exc).__name__}")
+        _notify_paypay_refund_fallback(details)
+        return
+    if should_notify and _notify_admin_paypay_refund(refund):
+        try:
+            billing_store.mark_refund_notified(job_id)
+        except Exception as exc:
+            print(f"[AUTOCAT REFUND] notification state update failed: {type(exc).__name__}")
+
+
+def _refund_unattached_billing(billing: dict | None, job_id: str, reason: str) -> None:
+    """Undo reservations when no durable job was attached to a request."""
+    if not billing:
+        return
+    free_id = billing.get("first_free_run_reservation_id")
+    if free_id:
+        try:
+            billing_store.settle_free_run(str(free_id), success=False)
+        except Exception as exc:
+            print(f"[ERROR] AUTOCAT free-run refund: {type(exc).__name__}")
+    points_id = billing.get("points_reservation_id")
+    if points_id:
+        try:
+            release_reserved_points(str(points_id))
+        except Exception as exc:
+            print(f"[ERROR] AUTOCAT point refund: {type(exc).__name__}")
+    if billing.get("billing_method") == "paypay":
+        _queue_paypay_refund({**billing, "billing_job_id": job_id}, reason)
+
+
+def _reserve_autocat_billing(data: dict, job_id: str, operation_id: str, item_count: int, is_paid_vip: bool):
+    """Reserve one of the first three free successful runs or collect a payment."""
+    discord_user = current_user() or {}
+    discord_user_id = str(discord_user.get("id") or "")
+    if not re.fullmatch(r"\d{15,22}", discord_user_id):
+        return None, (jsonify({
+            "error": "利用回数・お支払いの管理にDiscordログインが必要です。",
+            "code": "discord_login_required", "discord_login_url": "/autocat/auth/login?next=/autocat/",
+        }), 401)
+    site_public_id = ""
+    if is_paid_vip:
+        return {
+            "billing_method": "vip", "billing_amount_yen": 0,
+            "billing_item_count": int(item_count), "billing_job_id": job_id,
+            "billing_site_public_id": site_public_id,
+            "billing_site_username": str(discord_user.get("username") or ""),
+            "billing_discord_user_id": discord_user_id,
+        }, None
+    try:
+        free_reservation_id = f"autocat-free:{job_id}"
+        reservation = billing_store.reserve_free_run(
+            real_ip(), data.get("fingerprint", ""), free_reservation_id, discord_user_id
+        )
+    except BillingIdentityConflict as exc:
+        return None, (jsonify({"error": str(exc), "code": "identity_conflict"}), 409)
+    except BillingError as exc:
+        return None, (jsonify({"error": str(exc), "code": "identity_invalid"}), 400)
+    except sqlite3.Error as exc:
+        print(f"[AUTOCAT BILLING] free reservation failed: {type(exc).__name__}")
+        return None, (jsonify({"error": "無料利用回数を確認できませんでした。少し待ってから再実行してください。"}), 503)
+    if reservation:
+        return {
+            "first_free_run_reservation_id": free_reservation_id,
+            "billing_method": "free", "billing_amount_yen": 0,
+            "billing_item_count": int(item_count), "billing_job_id": job_id,
+            "billing_site_public_id": site_public_id,
+            "billing_site_username": str(discord_user.get("username") or ""),
+            "billing_discord_user_id": discord_user_id,
+        }, None
+
+    quote = _billing_options(item_count, discord_user_id)
+    method = str(data.get("payment_method") or "").strip().lower()
+    if not method:
+        return None, (jsonify({
+            "error": "初回無料3回を使い切りました。共通ポイントまたはPayPayでお支払いください。",
+            "code": "payment_required", **quote,
+        }), 402)
+    amount_yen = int(quote["amount_yen"])
+    base = {
+        "billing_method": method,
+        "billing_amount_yen": amount_yen,
+        "billing_item_count": int(item_count),
+        "billing_job_id": job_id,
+        "billing_site_public_id": "",
+        "billing_site_username": str(discord_user.get("username") or ""),
+        "billing_discord_user_id": discord_user_id,
+        "operation_id": str(operation_id or ""),
+    }
+    if method == "points":
+        try:
+            balance = get_balance(discord_user_id)
+            if balance < amount_yen:
+                return None, (jsonify({
+                    "error": f"ポイントが不足しています。必要: {amount_yen:,}ポイント、残高: {balance:,}ポイント。PayPay支払いも選べます。",
+                    "code": "insufficient_points", "points_balance": balance, **quote,
+                }), 402)
+            points_reservation_id = f"autocat-points:{job_id}"
+            if not reserve_points(
+                discord_user_id, amount_yen, points_reservation_id,
+                reason="AUTOCAT利用料金",
+            ):
+                return None, (jsonify({
+                    "error": "ポイント残高が変わりました。残高を確認して再度お試しください。",
+                    "code": "insufficient_points", "points_balance": get_balance(discord_user_id), **quote,
+                }), 402)
+            return {**base, "points_reservation_id": points_reservation_id}, None
+        except Exception as exc:
+            print(f"[AUTOCAT BILLING] point reservation failed: {type(exc).__name__}")
+            return None, (jsonify({"error": "ポイント決済を開始できませんでした。少し待ってから再実行してください。", "code": "points_unavailable"}), 503)
+
+    if method != "paypay":
+        return None, (jsonify({"error": "支払い方法が不正です。", "code": "payment_method_invalid"}), 400)
+    credentials = _paypay_credentials()
+    if not credentials:
+        return None, (jsonify({"error": "管理者のPayPay受取設定がありません。管理者へ連絡してください。", "code": "paypay_unavailable"}), 503)
+    link = str(data.get("paypay_link") or "").strip()
+    parts = urlsplit(link)
+    if (
+        parts.scheme.lower() != "https"
+        or (parts.hostname or "").lower() != "pay.paypay.ne.jp"
+        or not re.fullmatch(r"/[A-Za-z0-9]{16}", parts.path or "")
+        or parts.query or parts.fragment
+    ):
+        return None, (jsonify({"error": "PayPayリンクの形式が正しくありません。", "code": "paypay_link_invalid"}), 400)
+    link_hash = billing_store.payment_link_hash(link)
+    if not billing_store.claim_paypay_link(link_hash, f"autocat:{job_id}"):
+        return None, (jsonify({"error": "このPayPayリンクは既に使用済み、または確認中です。", "code": "paypay_link_used"}), 409)
+    try:
+        payment_result = asyncio.run(_receive_autocat_paypay_link(link, amount_yen, credentials))
+    except Exception as exc:
+        print(f"[AUTOCAT PAYPAY] event loop failed: {type(exc).__name__}")
+        payment_result = {"ok": False, "code": "paypay_status_unknown", "error": "PayPay決済状態を確認できませんでした。", "uncertain": True}
+    if not payment_result.get("ok"):
+        if payment_result.get("uncertain"):
+            try:
+                billing_store.set_paypay_link_status(link_hash, "review")
+            except sqlite3.Error as exc:
+                print(f"[AUTOCAT PAYPAY] review state save failed: {type(exc).__name__}")
+            refund_job = {**base, "billing_method": "paypay", "billing_job_id": job_id}
+            refund_job["billing_amount_yen"] = amount_yen
+            refund_job["operation_id"] = str(operation_id or "")
+            _queue_paypay_refund(refund_job, "PayPay受取状態が不明なため管理者確認が必要です。")
+            return None, (jsonify({
+                "error": f"{payment_result.get('error') or '決済状態を確認できませんでした。'}返金/受取確認を管理者へ依頼しました。受付ID: {operation_id or job_id}",
+                "code": "payment_review",
+            }), 503)
+        billing_store.release_paypay_link(link_hash)
+        return None, (jsonify({
+            "error": payment_result.get("error") or "PayPay決済を確認できませんでした。",
+            "code": payment_result.get("code") or "paypay_failed",
+        }), 402)
+    try:
+        billing_store.set_paypay_link_status(link_hash, "received")
+    except sqlite3.Error as exc:
+        print(f"[AUTOCAT PAYPAY] received state save failed: {type(exc).__name__}")
+        _notify_paypay_refund_fallback({
+            "job_id": job_id, "operation_id": str(operation_id or ""),
+            "site_public_id": "",
+            "site_username": str(discord_user.get("username") or ""),
+            "discord_user_id": discord_user_id,
+            "amount_yen": amount_yen,
+            "reason": "PayPay受取後に決済記録を永続化できませんでした。手動で実行状態を確認し、未実行なら返金してください。",
+        })
+        return None, (jsonify({
+            "error": "PayPay受取後の記録に失敗しました。実行状態の確認/返金を管理者へ依頼しました。",
+            "code": "payment_review",
+        }), 503)
+    return {**base, "billing_method": "paypay", "paypay_link_hash": link_hash}, None
+
+
 def _reserve_free_quota(data: dict, job_id: str):
     """無料版の実行1回分を原子的に予約する。"""
     try:
@@ -5311,41 +5742,31 @@ def api_run_daiko():
     operation_id = _safe_operation_id(data)
     if not operation_id:
         return jsonify({"error": "受付IDは30桁の英数字です"}), 400
-    quota_reservation_id = None
-    trial_vip_reservation_id = None
-    if is_vip_confirmed:
-        trial_vip_reservation_id, vip_error = _reserve_site_vip_job(job_id)
-        if vip_error:
-            return vip_error
-    else:
-        quota_reservation_id, quota_error = _reserve_free_quota(data, job_id)
-        if quota_error:
-            return quota_error
+    item_count = _billing_item_count("daiko", selected_payload)
+    billing, billing_error = _reserve_autocat_billing(data, job_id, operation_id, item_count, is_vip_confirmed)
+    if billing_error:
+        return billing_error
     now = time.time()
     try:
         _create_operation(operation_id, job_id, "daiko", now)
     except sqlite3.IntegrityError:
-        _refund_unattached_quota(quota_reservation_id)
-        _refund_unattached_vip_trial(trial_vip_reservation_id)
+        _refund_unattached_billing(billing, job_id, "受付IDが重複しました。")
         return jsonify({"error": "その受付IDは既に登録されています"}), 409
     except sqlite3.Error:
-        _refund_unattached_quota(quota_reservation_id)
-        _refund_unattached_vip_trial(trial_vip_reservation_id)
+        _refund_unattached_billing(billing, job_id, "受付情報を保存できませんでした。")
         return jsonify({"error": "受付情報を保存できませんでした。"}), 503
     try:
         _create_job(job_id, {"status": "pending", "log": "待機中...",
                              "operation_id": operation_id, "operation_type": "daiko",
                              "job_access_hash": job_access_hash,
-                             "quota_reservation_id": quota_reservation_id,
-                             "trial_vip_reservation_id": trial_vip_reservation_id,
+                             **billing,
                              "error": None, "requester": achievement_actor(),
                              "transfer_code": None, "auth_code": None,
                              "applied": [], "created_at": now, "updated_at": now,
                              "transfer_received": False})
     except Exception:
         _discard_unstarted_job(job_id)
-        _refund_unattached_quota(quota_reservation_id)
-        _refund_unattached_vip_trial(trial_vip_reservation_id)
+        _refund_unattached_billing(billing, job_id, "ジョブ情報の保存に失敗しました。")
         _close_operation(
             operation_id, status="error", recovery_status="not_available",
             error="ジョブ情報の保存に失敗しました。",
@@ -5362,6 +5783,7 @@ def api_run_daiko():
     except Exception as exc:
         error_text = _safe_error_message(exc)
         _update_job(job_id, {"status": "error", "error": error_text, "updated_at": time.time()})
+        _settle_job_quota(_load_job(job_id))
         _close_operation(
             operation_id,
             status="error",
@@ -5431,29 +5853,21 @@ def api_run_create():
 
     job_id = str(uuid.uuid4())
     job_token, job_access_hash = _new_job_access_token()
-    quota_reservation_id = None
-    trial_vip_reservation_id = None
-    if is_vip_confirmed:
-        trial_vip_reservation_id, vip_error = _reserve_site_vip_job(job_id)
-        if vip_error:
-            return vip_error
-    else:
-        quota_reservation_id, quota_error = _reserve_free_quota(data, job_id)
-        if quota_error:
-            return quota_error
+    item_count = _billing_item_count("create", selected_payload, count)
+    billing, billing_error = _reserve_autocat_billing(data, job_id, "", item_count, is_vip_confirmed)
+    if billing_error:
+        return billing_error
     now = time.time()
     try:
         _create_job(job_id, {"status": "pending", "log": "待機中...",
                              "job_access_hash": job_access_hash,
-                             "quota_reservation_id": quota_reservation_id,
-                             "trial_vip_reservation_id": trial_vip_reservation_id,
+                             **billing,
                              "error": None, "requester": achievement_actor(),
                              "transfer_code": None, "auth_code": None,
                              "applied": [], "accounts": [], "created_at": now, "updated_at": now})
     except Exception:
         _discard_unstarted_job(job_id)
-        _refund_unattached_quota(quota_reservation_id)
-        _refund_unattached_vip_trial(trial_vip_reservation_id)
+        _refund_unattached_billing(billing, job_id, "ジョブ情報の保存に失敗しました。")
         return jsonify({"error": "処理を開始できませんでした"}), 503
     register_job_to_session(job_id)
     try:
@@ -5466,6 +5880,7 @@ def api_run_create():
     except Exception as exc:
         error_text = _safe_error_message(exc)
         _update_job(job_id, {"status": "error", "error": error_text, "updated_at": time.time()})
+        _settle_job_quota(_load_job(job_id))
         return jsonify({"error": "処理を開始できませんでした"}), 503
     return jsonify({"job_id": job_id, "job_token": job_token})
 
@@ -5485,39 +5900,31 @@ def api_run_clone():
         return jsonify({"error": "混雑しています。少し待ってからお試しください。"}), 503
 
     is_vip_confirmed = site_vip_confirmed()
+    count = safe_count(data, MAX_COUNT if is_vip_confirmed else 2)
 
     job_id = str(uuid.uuid4())
     job_token, job_access_hash = _new_job_access_token()
     operation_id = _safe_operation_id(data)
     if not operation_id:
         return jsonify({"error": "受付IDは30桁の英数字です"}), 400
-    quota_reservation_id = None
-    trial_vip_reservation_id = None
-    if is_vip_confirmed:
-        trial_vip_reservation_id, vip_error = _reserve_site_vip_job(job_id)
-        if vip_error:
-            return vip_error
-    else:
-        quota_reservation_id, quota_error = _reserve_free_quota(data, job_id)
-        if quota_error:
-            return quota_error
+    item_count = _billing_item_count("clone", {}, count)
+    billing, billing_error = _reserve_autocat_billing(data, job_id, operation_id, item_count, is_vip_confirmed)
+    if billing_error:
+        return billing_error
     now = time.time()
     try:
         _create_operation(operation_id, job_id, "clone", now)
     except sqlite3.IntegrityError:
-        _refund_unattached_quota(quota_reservation_id)
-        _refund_unattached_vip_trial(trial_vip_reservation_id)
+        _refund_unattached_billing(billing, job_id, "受付IDが重複しました。")
         return jsonify({"error": "その受付IDは既に登録されています"}), 409
     except sqlite3.Error:
-        _refund_unattached_quota(quota_reservation_id)
-        _refund_unattached_vip_trial(trial_vip_reservation_id)
+        _refund_unattached_billing(billing, job_id, "受付情報を保存できませんでした。")
         return jsonify({"error": "受付情報を保存できませんでした。"}), 503
     try:
         _create_job(job_id, {"status": "pending", "log": "待機中...",
                              "operation_id": operation_id, "operation_type": "clone",
                              "job_access_hash": job_access_hash,
-                             "quota_reservation_id": quota_reservation_id,
-                             "trial_vip_reservation_id": trial_vip_reservation_id,
+                             **billing,
                              "error": None, "requester": achievement_actor(),
                              "orig_transfer_code": None, "orig_auth_code": None,
                              "copy_transfer_code": None, "copy_auth_code": None,
@@ -5525,15 +5932,13 @@ def api_run_clone():
                              "transfer_received": False})
     except Exception:
         _discard_unstarted_job(job_id)
-        _refund_unattached_quota(quota_reservation_id)
-        _refund_unattached_vip_trial(trial_vip_reservation_id)
+        _refund_unattached_billing(billing, job_id, "ジョブ情報の保存に失敗しました。")
         _close_operation(
             operation_id, status="error", recovery_status="not_available",
             error="ジョブ情報の保存に失敗しました。",
         )
         return jsonify({"error": "処理を開始できませんでした"}), 503
     register_job_to_session(job_id)
-    count = safe_count(data, MAX_COUNT if is_vip_confirmed else 2)
     try:
         executor.submit(
             run_job_clone,
@@ -5543,6 +5948,7 @@ def api_run_clone():
     except Exception as exc:
         error_text = _safe_error_message(exc)
         _update_job(job_id, {"status": "error", "error": error_text, "updated_at": time.time()})
+        _settle_job_quota(_load_job(job_id))
         _close_operation(
             operation_id,
             status="error",
@@ -5568,6 +5974,12 @@ def api_job_status(job_id):
     job.pop("job_access_hash", None)
     job.pop("quota_reservation_id", None)
     job.pop("trial_vip_reservation_id", None)
+    for private_key in (
+        "first_free_run_reservation_id", "points_reservation_id", "paypay_link_hash",
+        "billing_job_id", "billing_site_public_id", "billing_site_username",
+        "billing_discord_user_id",
+    ):
+        job.pop(private_key, None)
     return jsonify(job)
 
 
@@ -5590,29 +6002,37 @@ def api_free_status():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "入力が不正です"}), 400
-    site_account = current_site_user()
+    discord_user = current_user() or {}
+    discord_user_id = str(discord_user.get("id") or "")
+    if not re.fullmatch(r"\d{15,22}", discord_user_id):
+        return jsonify({
+            "error": "利用回数の管理にはDiscordログインが必要です。",
+            "code": "discord_login_required", "discord_login_url": "/autocat/auth/login?next=/autocat/",
+        }), 401
+    paid_vip = discord_vip_role_confirmed(discord_user)
     try:
-        _process_invitation_vip_trials()
-        result = free_usage_manager.status(
-            real_ip(), data.get("fingerprint", ""),
-            allow_month_end_unlimited=bool(site_account),
-        )
-    except IdentityConflict as exc:
+        if paid_vip:
+            result = {"free_runs_limit": 3, "free_runs_used": 0, "free_runs_reserved": 0, "remaining": 3, "unlimited": True}
+        else:
+            result = billing_store.status(
+                real_ip(), data.get("fingerprint", ""), discord_user_id,
+            )
+    except BillingIdentityConflict as exc:
         return jsonify({"error": str(exc), "code": "identity_conflict"}), 409
-    except FreeUsageError as exc:
+    except BillingError as exc:
         return jsonify({"error": str(exc), "code": "identity_invalid"}), 400
     except sqlite3.Error:
         return jsonify({"error": "利用回数を確認できませんでした。"}), 503
-    site_account = current_site_user()
-    result["trial"] = {
-        "logged_in": bool(site_account),
-        "is_vip": bool(site_account and site_account.get("is_vip")),
-        "claimed": bool(site_account and site_account.get("trial_vip_claimed_at")),
-        "offer_active": bool(site_account and site_account.get("trial_offer_active")),
-        "offer_expires_at": site_account.get("trial_offer_expires_at") if site_account else None,
-        "uses_remaining": int(site_account.get("trial_vip_uses_remaining") or 0) if site_account else 0,
-        "vip_expires_at": site_account.get("vip_expires_at") if site_account else None,
-    }
+    options = _billing_options(1, discord_user_id)
+    result.update({
+        "paid_vip": paid_vip,
+        "payment_required": not paid_vip and int(result.get("remaining", 0)) <= 0,
+        "unit_price_yen": AUTOCAT_ITEM_PRICE_YEN,
+        "discord_login_url": options["discord_login_url"],
+        "points_available": options["points_available"],
+        "points_balance": options["points_balance"],
+        "paypay_available": options["paypay_available"],
+    })
     response = jsonify(result)
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -5621,47 +6041,13 @@ def api_free_status():
 @app.route("/api/free/invitation", methods=["POST"])
 @limiter.limit("10 per minute")
 def api_free_invitation():
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return jsonify({"error": "入力が不正です"}), 400
-    try:
-        result = free_usage_manager.invitation_link(
-            real_ip(), data.get("fingerprint", ""), PUBLIC_BASE_URL,
-            allow_month_end_unlimited=bool(current_site_user()),
-        )
-    except IdentityConflict as exc:
-        return jsonify({"error": str(exc), "code": "identity_conflict"}), 409
-    except FreeUsageError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except sqlite3.Error:
-        return jsonify({"error": "招待リンクを発行できませんでした。"}), 503
-    response = jsonify(result)
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    return jsonify({"error": "招待による無料回数報酬は終了しました。", "code": "invitation_rewards_disabled"}), 410
 
 
 @app.route("/api/free/invitation/redeem", methods=["POST"])
 @limiter.limit("10 per minute")
 def api_free_invitation_redeem():
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return jsonify({"error": "入力が不正です"}), 400
-    try:
-        result = free_usage_manager.redeem_invitation(
-            data.get("code", ""), real_ip(), data.get("fingerprint", ""),
-            allow_month_end_unlimited=bool(current_site_user()),
-        )
-    except IdentityConflict as exc:
-        return jsonify({"error": str(exc), "code": "identity_conflict"}), 409
-    except InvitationError as exc:
-        return jsonify({"error": str(exc), "code": "invitation_rejected"}), 409
-    except FreeUsageError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except sqlite3.Error:
-        return jsonify({"error": "招待報酬を処理できませんでした。"}), 503
-    response = jsonify(result)
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    return jsonify({"error": "招待による無料回数報酬は終了しました。", "code": "invitation_rewards_disabled"}), 410
 
 
 @app.route("/api/admin/operations/<operation_id>")
@@ -5687,6 +6073,42 @@ def api_admin_operation(operation_id):
     response = jsonify(result)
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@app.route("/api/admin/billing/refunds")
+@limiter.limit("30 per minute")
+@admin_api_required
+def api_admin_billing_refunds():
+    try:
+        requests = billing_store.pending_refund_requests(100)
+    except sqlite3.Error:
+        return jsonify({"error": "返金依頼を読み込めませんでした。"}), 503
+    response = jsonify({"requests": requests})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/api/admin/billing/refunds/<job_id>", methods=["POST"])
+@limiter.limit("10 per minute")
+@admin_api_required
+def api_admin_billing_refund_resolve(job_id):
+    if not request.is_json:
+        return jsonify({"error": "JSONリクエストが必要です。"}), 415
+    if not _valid_admin_csrf():
+        return jsonify({"error": "CSRF検証に失敗しました。"}), 403
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", job_id):
+        return jsonify({"error": "返金依頼IDの形式が不正です。"}), 400
+    data = request.get_json(silent=True) or {}
+    status = str(data.get("status") or "")
+    if status not in {"refunded", "cancelled"}:
+        return jsonify({"error": "statusはrefundedまたはcancelledを指定してください。"}), 400
+    try:
+        updated = billing_store.resolve_refund_request(job_id, status)
+    except sqlite3.Error:
+        return jsonify({"error": "返金依頼を更新できませんでした。"}), 503
+    if not updated:
+        return jsonify({"error": "依頼が見つからないか、すでに処理済みです。"}), 409
+    return jsonify({"status": status})
 
 
 @app.route("/api/admin/operations/<operation_id>/reissue", methods=["POST"])

@@ -631,9 +631,6 @@
 </div>
 
 <div class="main">
-  {% if user.is_trial_vip and not user.is_paid_vip %}
-  <div style="margin-bottom:14px;padding:12px 15px;border:1px solid rgba(74,222,128,.42);border-radius:10px;background:rgba(74,222,128,.07);color:#86efac;font-size:12px;font-weight:700;">VIP無料体験：実行できるのは残り1回です。代行・作成・複製の成功時に消費され、処理失敗時は返却されます。</div>
-  {% endif %}
   <div class="tabs">
     <button class="tab active" onclick="switchTab('daiko')">引き継ぎコード代行</button>
     <button class="tab" onclick="switchTab('create')">新規アカウント作成</button>

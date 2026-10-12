@@ -445,12 +445,10 @@
   <div class="logo">にゃんこ<span>代行ツール</span></div>
   <div class="usage-stats">
     <span class="usage-counter">使用回数<span class="usage-count-num" id="usage-count-num">--</span>回</span>
-    <span class="usage-counter remaining-counter" title="招待などで獲得した、週間枠とは別の回数">ボーナス回数<span class="usage-count-num" id="remaining-count-num">--</span><span id="remaining-count-suffix">回</span></span>
-    <span class="usage-counter" title="毎週月曜0:00に10回へ更新・合計上限20回">今週分<span class="usage-count-num" id="weekly-count-num">--</span>回</span>
+    <span class="usage-counter remaining-counter" title="初回3回まで無料。その後は1項目50円" id="free-usage-counter"><span id="free-counter-label">初回無料残り</span><span class="usage-count-num" id="remaining-count-num">--</span><span id="remaining-count-suffix">回</span></span>
   </div>
   <div class="header-spacer"></div>
   <div class="header-actions">
-    <button class="btn btn-ghost" id="invite-button" onclick="toggleInvitation()">招待</button>
     <button class="btn btn-ghost" onclick="openCharSearch()">キャラ検索</button>
     <button class="btn btn-ghost" onclick="openHistory()">履歴</button>
     <button class="btn btn-ghost" onclick="openTerms()">利用規約</button>
@@ -464,38 +462,30 @@
     <a href="/autocat/auth/login?next=/autocat/" class="btn btn-ghost">Discordログイン</a>
     {% endif %}
 
-    {% if not user or not user.is_vip %}
     <a href="/autocat/vip-guide" class="btn btn-ghost vip-link">★ VIPを見る</a>
-    {% endif %}
-
-    {% if not user %}
-    <a href="/autocat/account/login" class="btn btn-ghost">サイトログイン</a>
-    <a href="/autocat/account/register" class="btn btn-ghost">アカウント作成</a>
-    {% else %}
-    <a href="/autocat/account" class="user-chip" style="text-decoration:none;">
-      {{ user.username }}{% if user.is_vip %} <span class="vip-badge">★VIP</span>{% endif %}
-    </a>
-    {% if user.is_vip %}
-    <a href="/autocat/vip" class="btn btn-ghost">VIPページへ</a>
-    {% endif %}
-    <a href="/autocat/account/logout" class="btn btn-ghost">サイトログアウト</a>
-    {% endif %}
   </div>
 </header>
 
-<div id="invite-drawer" class="invite-drawer" aria-hidden="true">
-  <div class="invite-drawer-head">
-    <div class="invite-drawer-title">あなたの招待リンク</div>
-    <div class="header-spacer"></div>
-    <button class="copy-btn" onclick="toggleInvitation(false)">閉じる</button>
-  </div>
-  <div class="invite-link-row">
-    <input type="text" id="invitation-link" value="読み込み中..." readonly aria-label="あなたの招待リンク">
-    <button class="btn btn-primary" id="copy-invitation-button" onclick="copyInvitationLink()" disabled>コピー</button>
-  </div>
-  <div id="invitation-message" class="char-note" style="margin-top:9px;">リンクを開いた人が無料版を1回成功させると、招待者に3回・利用者に2回付与されます。週間無料枠と招待報酬を合わせて最大20回まで保有できます。</div>
-</div>
 <div id="top-notice" class="top-notice" role="status" aria-live="polite"></div>
+
+<div id="autocat-checkout-modal" role="dialog" aria-modal="true" aria-labelledby="checkout-title" style="display:none;position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:18px;">
+  <div style="width:min(100%,480px);background:#18181f;border:1px solid #3c3c4a;border-radius:16px;padding:22px;box-shadow:0 20px 60px #0008;">
+    <h2 id="checkout-title" style="margin:0 0 8px;">お支払い</h2>
+    <p id="checkout-summary" style="color:var(--muted);margin:0 0 14px;"></p>
+    <p id="checkout-message" style="color:#fbbf24;margin:0 0 12px;"></p>
+    <div id="checkout-account-required" hidden style="padding:12px;background:#252530;border-radius:10px;margin-bottom:12px;">
+      <div>利用回数とお支払いをDiscord IDに紐付けるため、Discordログインが必要です。</div>
+      <div style="display:flex;gap:8px;margin-top:10px;"><a id="checkout-login-link" class="btn btn-primary" href="/autocat/auth/login?next=/autocat/">Discordログイン</a></div>
+    </div>
+    <div id="checkout-options">
+      <label style="display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid #343444;border-radius:10px;margin:8px 0;cursor:pointer;"><input type="radio" name="autocat-payment-method" value="points"><span><strong>共通ポイント</strong><br><small id="checkout-points-detail">ツムツム等と共通・1ポイント＝1円</small></span></label>
+      <label style="display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid #343444;border-radius:10px;margin:8px 0;cursor:pointer;"><input type="radio" name="autocat-payment-method" value="paypay"><span><strong>PayPay</strong><br><small>PayPayリンクでお支払い</small></span></label>
+      <input id="checkout-paypay-link" type="url" inputmode="url" autocomplete="off" maxlength="256" placeholder="https://pay.paypay.ne.jp/..." style="display:none;width:100%;box-sizing:border-box;margin-top:8px;padding:12px;border-radius:9px;border:1px solid #474757;background:#111118;color:#fff;">
+
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px;"><button id="checkout-cancel" class="btn btn-ghost" type="button">キャンセル</button><button id="checkout-submit" class="btn btn-primary" type="button">決済して実行</button></div>
+  </div>
+</div>
 
 <div id="free-preset-modal" class="free-preset-modal" onclick="if(event.target===this)closeFreePreset()">
   <div class="free-preset-dialog">
@@ -572,13 +562,6 @@
 </div>
 
 <div class="main">
-  {% if not user %}
-  <section id="month-end-account-nudge" class="month-end-nudge" hidden>
-    <strong>今日はFree無制限デー</strong>
-    <p>無料のサイトアカウントを作成してログインすると、本日中は残り回数を気にせず利用できます。</p>
-    <div class="month-end-actions"><a class="btn btn-primary" href="/autocat/account/register?next=/autocat/">無料で作成</a><a class="btn btn-ghost" href="/autocat/account/login?next=/autocat/">ログイン</a></div>
-  </section>
-  {% endif %}
   <section class="vip-promo" aria-label="VIP版の案内">
     <div>
       <div class="vip-promo-kicker">AUTOCAT JP VIP</div>
@@ -592,14 +575,10 @@
     </div>
     <a href="/autocat/vip-guide" class="btn btn-primary vip-link vip-promo-action">Freeとの違いを見る →</a>
   </section>
-  {% if user and not user.is_vip and user.trial_offer_active %}
-  <section id="trial-promo" class="trial-promo" data-expires="{{ user.trial_offer_expires_at }}">
-    <strong>登録後1時間限定：招待1人成立でVIPを1回無料</strong>
-    <p>招待リンクを開いた相手がFree版を1回成功すると、VIP版の実行権が1回付与されます。処理失敗時は消費されません。</p>
-    <span id="trial-countdown" class="trial-countdown">--:--</span>
-    <button class="btn btn-primary" type="button" onclick="toggleInvitation(true)">招待リンクを開く</button>
+  <section class="card" style="margin:14px 0;padding:14px 18px;">
+    <strong>料金</strong>
+    <span style="color:var(--muted);margin-left:8px;">初回は3回まで無料。以降は選択項目1つにつき50円（作成・複製は個数分）。支払いは共通ポイントまたはPayPayです。管理者から有料VIPを付与されたアカウントは無料・無制限で利用できます。</span>
   </section>
-  {% endif %}
   <div class="tabs">
     <button class="tab active" onclick="switchTab('daiko')">引き継ぎコード代行</button>
     <button class="tab" onclick="switchTab('create')">新規アカウント作成</button>
@@ -1341,9 +1320,7 @@ function positionTopPanels() {
   const header=document.getElementById('site-header');
   if (!header) return;
   const top=Math.max(0,header.getBoundingClientRect().bottom);
-  const drawer=document.getElementById('invite-drawer');
   const notice=document.getElementById('top-notice');
-  if (drawer) drawer.style.top=`${top}px`;
   if (notice) notice.style.top=`${top}px`;
 }
 
@@ -1361,52 +1338,30 @@ function showTopNotice(message, type='success') {
 function applyQuotaButtonState() {
   for (const tab of ['daiko','create','clone']) {
     const button=document.getElementById(`btn-${tab}`);
-    if (button && button.dataset.running!=='1') {
-      button.disabled=!freeQuotaLoaded||!freeQuotaCanUse;
-    }
+    if (button && button.dataset.running!=='1') button.disabled=!freeQuotaLoaded;
   }
   updateStickyRunButton();
 }
 
-function applyFreeStatus(data, {notify=true}={}) {
+function applyFreeStatus(data) {
   freeQuotaLoaded=true;
-  freeQuotaCanUse=Boolean(data.unlimited)||Number(data.remaining)>0;
+  freeQuotaCanUse=true; // 無料枠消化後も決済して利用できる。
   const remaining=document.getElementById('remaining-count-num');
   const suffix=document.getElementById('remaining-count-suffix');
-  const weekly=document.getElementById('weekly-count-num');
-  if (remaining) remaining.textContent=Number(data.banked_remaining||0).toLocaleString('ja-JP');
-  if (suffix) suffix.textContent='回';
-  if (weekly) weekly.textContent=Number(data.weekly_remaining||0).toLocaleString('ja-JP');
-  const monthEndNudge=document.getElementById('month-end-account-nudge');
-  if(monthEndNudge)monthEndNudge.hidden=!Boolean(data.month_end_account_required);
+  const label=document.getElementById('free-counter-label');
+  if (data.unlimited) {
+    if (label) label.textContent='VIP';
+    if (remaining) remaining.textContent='∞';
+    if (suffix) suffix.textContent='';
+  } else {
+    if (label) label.textContent='初回無料残り';
+    if (remaining) remaining.textContent=Number(data.remaining||0).toLocaleString('ja-JP');
+    if (suffix) suffix.textContent='回';
+  }
   applyQuotaButtonState();
-  if (data.trial?.claimed && Number(data.trial?.uses_remaining)>0) {
-    const seen=sessionStorage.getItem('autocat_trial_vip_seen_v2');
-    if(!seen){sessionStorage.setItem('autocat_trial_vip_seen_v2','1');showTopNotice('招待成立によりVIP版を1回無料で実行できます。VIPページへ移動します！');setTimeout(()=>location.assign('/autocat/vip'),1200);}
-  } else if (data.trial && !data.trial.offer_active) {
-    const trial=document.getElementById('trial-promo');if(trial)trial.hidden=true;
-  }
-  try {
-    const wasPending=localStorage.getItem('autocat_invitation_pending_v1')==='1';
-    if (data.invitation_pending) localStorage.setItem('autocat_invitation_pending_v1','1');
-    else if (wasPending) {
-      localStorage.removeItem('autocat_invitation_pending_v1');
-      showTopNotice('招待が成立しました。合計上限20回の範囲で、招待者に3回・あなたに2回付与されました！');
-    }
-  } catch {}
-  if (notify && (data.weekly_reset || data.unlimited_awarded)) {
-    const weeklyGrant=Number(data.weekly_grant||0);
-    showTopNotice(data.unlimited_awarded
-      ? 'サイトアカウント特典により、本日はFree版を無制限で利用できます！'
-      : weeklyGrant>0
-        ? `今週のFree利用枠を${weeklyGrant}回付与しました。合計上限は20回です。`
-        : '残り回数が上限20回のため、今週の追加付与はありません。');
-  }
 }
 
-function updateTrialCountdown(){const promo=document.getElementById('trial-promo'),out=document.getElementById('trial-countdown');if(!promo||!out)return;const remaining=Math.max(0,Math.floor(Number(promo.dataset.expires)*1000-Date.now()));if(!remaining){promo.hidden=true;return;}const total=Math.ceil(remaining/1000);out.textContent=`${String(Math.floor(total/60)).padStart(2,'0')}:${String(total%60).padStart(2,'0')}`;}
-
-async function fetchFreeStatus(options={}) {
+async function fetchFreeStatus() {
   try {
     const fingerprint=await getBrowserFingerprint();
     const res=await fetchWithTimeout('/autocat/api/free/status',{
@@ -1415,97 +1370,69 @@ async function fetchFreeStatus(options={}) {
     },15000);
     const data=await res.json().catch(()=>({}));
     if (!res.ok) throw new Error(data.error||'残り回数を確認できませんでした');
-    applyFreeStatus(data,options);
+    applyFreeStatus(data);
     return data;
   } catch (error) {
     if (!freeQuotaLoaded) {
       const remaining=document.getElementById('remaining-count-num');
-      if (remaining) remaining.textContent='取得失敗';
+      if (remaining) remaining.textContent=error.message.includes('Discordログイン')?'ログイン必要':'取得失敗';
       applyQuotaButtonState();
     }
     return null;
   }
 }
 
-async function loadInvitationLink() {
-  const input=document.getElementById('invitation-link');
-  const copyButton=document.getElementById('copy-invitation-button');
-  const message=document.getElementById('invitation-message');
-  if (input) input.value='読み込み中...';
-  if (copyButton) copyButton.disabled=true;
-  try {
-    const fingerprint=await getBrowserFingerprint();
-    const res=await fetchWithTimeout('/autocat/api/free/invitation',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({fingerprint}),
-    },15000);
-    const data=await res.json().catch(()=>({}));
-    if (!res.ok) throw new Error(data.error||'招待リンクを発行できませんでした');
-    if (input) input.value=data.url;
-    if (copyButton) copyButton.disabled=false;
-    if (message) {
-      const remaining=Number.isInteger(data.daily_invite_remaining)?` 本日はあと${data.daily_invite_remaining}人招待できます。`:'';
-      message.textContent=`招待された人が無料版を1回成功させると、招待者に3回・利用者に2回付与されます。招待成立は1日2人・月10人、受取は1日1人・月3人、週間無料枠と招待報酬の合計上限は20回です。${remaining}`;
-    }
-    applyFreeStatus(data,{notify:false});
-    try { localStorage.setItem('autocat_invitation_pending_v1','1'); } catch {}
-  } catch (error) {
-    if (input) input.value='発行できませんでした';
-    if (message) message.textContent=error.message;
-  }
+let checkoutResolver=null;
+function finishCheckout(value) {
+  const modal=document.getElementById('autocat-checkout-modal');
+  if (modal) modal.style.display='none';
+  const resolve=checkoutResolver;
+  checkoutResolver=null;
+  if (resolve) resolve(value);
+}
+function openAutocatCheckout(info) {
+  const modal=document.getElementById('autocat-checkout-modal');
+  const amount=Number(info.amount_yen||0);
+  const count=Number(info.item_count||1);
+  document.getElementById('checkout-summary').textContent=`${count}項目 × ${Number(info.unit_price_yen||50).toLocaleString('ja-JP')}円 = ${amount.toLocaleString('ja-JP')}円`;
+  document.getElementById('checkout-message').textContent=info.message||info.error||'';
+  document.getElementById('checkout-account-required').hidden=Boolean(info.discord_logged_in);
+  document.getElementById('checkout-options').hidden=!info.discord_logged_in;
+  document.getElementById('checkout-login-link').href=info.discord_login_url||'/autocat/auth/login?next=/autocat/';
+  const points=document.querySelector('input[name="autocat-payment-method"][value="points"]');
+  const paypay=document.querySelector('input[name="autocat-payment-method"][value="paypay"]');
+  const balance=info.points_balance==null?null:Number(info.points_balance);
+  const pointDetail=document.getElementById('checkout-points-detail');
+  points.disabled=!info.points_available||(balance!==null&&balance<amount);
+  paypay.disabled=!info.paypay_available;
+  pointDetail.textContent=balance===null?'ツムツム等と共通・1ポイント＝1円':`残高 ${balance.toLocaleString('ja-JP')}ポイント（1ポイント＝1円）`;
+  document.getElementById('checkout-paypay-link').value='';
+  const initial=(!points.disabled?'points':(!paypay.disabled?'paypay':''));
+  document.querySelectorAll('input[name="autocat-payment-method"]').forEach(radio=>radio.checked=radio.value===initial);
+  const updatePaypayField=()=>{document.getElementById('checkout-paypay-link').style.display=paypay.checked?'block':'none';};
+  updatePaypayField();
+  modal.style.display='flex';
+  return new Promise(resolve=>{checkoutResolver=resolve;});
 }
 
-async function toggleInvitation(force) {
-  const drawer=document.getElementById('invite-drawer');
-  if (!drawer) return;
-  const open=typeof force==='boolean'?force:!drawer.classList.contains('open');
-  positionTopPanels();
-  drawer.classList.toggle('open',open);
-  drawer.setAttribute('aria-hidden',open?'false':'true');
-  if (open) await loadInvitationLink();
-}
-
-async function copyInvitationLink() {
-  const input=document.getElementById('invitation-link');
-  if (!input||!/^https:\/\//.test(input.value)) return;
-  try {
-    await navigator.clipboard.writeText(input.value);
-  } catch {
-    input.select();document.execCommand('copy');
-  }
-  showTopNotice('招待リンクをコピーしました。');
-}
-
-async function redeemInvitationFromUrl() {
-  const params=new URLSearchParams(location.search);
-  const code=params.get('code')||'';
-  if (!code) return;
-  if (!/^[A-Za-z0-9]{30}$/.test(code)) {
-    showTopNotice('招待コードの形式が不正です。','error');
-    history.replaceState(null,'',location.pathname+location.hash);
-    return;
-  }
-  try {
-    const fingerprint=await getBrowserFingerprint();
-    const res=await fetchWithTimeout('/autocat/api/free/invitation/redeem',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({code,fingerprint}),
-    },15000);
-    const data=await res.json().catch(()=>({}));
-    if (!res.ok) throw new Error(data.error||'招待報酬を受け取れませんでした');
-    applyFreeStatus(data,{notify:false});
-    showTopNotice('招待を仮登録しました。無料版の代行・作成・複製を1回成功すると、招待者に3回・あなたに2回付与されます。');
-  } catch (error) {
-    showTopNotice(error.message,'error');
-  } finally {
-    history.replaceState(null,'',location.pathname+location.hash);
-  }
-}
+document.querySelectorAll('input[name="autocat-payment-method"]').forEach(radio=>radio.addEventListener('change',()=>{
+  document.getElementById('checkout-paypay-link').style.display=radio.value==='paypay'&&radio.checked?'block':'none';
+}));
+document.getElementById('checkout-cancel').addEventListener('click',()=>finishCheckout(null));
+document.getElementById('checkout-submit').addEventListener('click',()=>{
+  const selected=document.querySelector('input[name="autocat-payment-method"]:checked');
+  if(!selected||selected.disabled){document.getElementById('checkout-message').textContent='利用できる支払い方法がありません。Discordログインと支払い設定を確認してください。';return;}
+  const link=document.getElementById('checkout-paypay-link').value.trim();
+  if(selected.value==='paypay'&&!link){document.getElementById('checkout-message').textContent='PayPayリンクを入力してください。';return;}
+  finishCheckout({method:selected.value,paypay_link:link});
+});
+document.getElementById('autocat-checkout-modal').addEventListener('click',event=>{
+  if(event.target.id==='autocat-checkout-modal')finishCheckout(null);
+});
 
 async function initialiseFreeUsage() {
   positionTopPanels();
-  await fetchFreeStatus({notify:true});
-  await redeemInvitationFromUrl();
+  await fetchFreeStatus();
 }
 
 window.addEventListener('resize',positionTopPanels);
@@ -1616,23 +1543,43 @@ async function startJob(tab, url, payload, extra = {}, resumeJobId = null, resum
   let jobToken = resumeJobToken;
   if (!job_id) {
     let res;
+    let responseData={};
     try {
       res = await fetchWithTimeout(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}, 60000);
+      responseData=await res.json().catch(()=>({}));
     } catch (e) {
       showStartError(e?.name === 'AbortError' ? '開始要求が60秒以内に完了しませんでした。開始済みの可能性があるため、すぐ再実行せず管理者へ確認してください。' : '開始要求の通信に失敗しました。');
       fetchFreeStatus({notify:false});
       return;
     }
+    let checkoutAttempts=0;
+    while (!res.ok && ['payment_required','insufficient_points'].includes(responseData.code) && checkoutAttempts<2) {
+      const choice=await openAutocatCheckout({...responseData,message:responseData.error||''});
+      if(!choice){showStartError('支払いをキャンセルしました。');await fetchFreeStatus();return;}
+      try {
+        const keyRes=await fetchWithTimeout('/autocat/api/get_key',{method:'POST'},15000);
+        if(!keyRes.ok)throw new Error('認証キーを取得できませんでした');
+        const keyData=await keyRes.json();
+        const paidPayload={...payload,api_key:keyData.api_key,payment_method:choice.method};
+        if(choice.method==='paypay')paidPayload.paypay_link=choice.paypay_link;
+        res=await fetchWithTimeout(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(paidPayload)},choice.method==='paypay'?120000:60000);
+        responseData=await res.json().catch(()=>({}));
+      } catch (e) {
+        showStartError(e?.name==='AbortError'?'決済確認がタイムアウトしました。重複送信せず、受付状況を管理者へ確認してください。':(e.message||'支払いの開始に失敗しました。'));
+        await fetchFreeStatus();
+        return;
+      }
+      checkoutAttempts++;
+    }
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
       box.className = 'result-box show error-box';
-      box.innerHTML = `<div style="color:var(--error);font-weight:700;margin-bottom:8px;">エラー</div><div class="error-msg">${escChar(err.error || '処理を開始できませんでした')}</div>`;
-      await fetchFreeStatus({notify:false});
+      box.innerHTML = `<div style="color:var(--error);font-weight:700;margin-bottom:8px;">エラー</div><div class="error-msg">${escChar(responseData.error || '処理を開始できませんでした')}</div>`;
+      await fetchFreeStatus();
       resetBtn();
       return;
     }
-    ({job_id, job_token:jobToken} = await res.json());
-    fetchFreeStatus({notify:false});
+    ({job_id, job_token:jobToken} = responseData);
+    fetchFreeStatus();
   } else {
     const st = document.getElementById(`status-${tab}`);
     if (st) st.textContent = '前回の処理状況を復元中...';
@@ -2026,8 +1973,6 @@ function renderHistory() {
 
 buildOptions('daiko');
 buildOptions('create');
-updateTrialCountdown();setInterval(updateTrialCountdown,1000);
-if(new URLSearchParams(location.search).get('trial_invite')==='1')setTimeout(()=>toggleInvitation(true),250);
 resumeSavedJobs();
 observeRunButtons();
 initialiseFreeUsage();
