@@ -40,6 +40,19 @@ def load_config():
     if not data:
         print(f"[bot] {CONFIG_FILE} とGoogle Sheets(tsum_config)がありません。既存Botのmain.py経由で起動してください。")
         sys.exit(1)
+    # Sheets移行前にローカルへ保存されていたサーバー別設定を救出する。
+    # 旧版では、にゃんこ専用実績チャンネルなどを guild_settings に保存していたが、
+    # シート側にこのキーが無い場合は load_json_store の全体置換で消えることがあった。
+    try:
+        with open(CONFIG_FILE, encoding="utf-8-sig") as _local_fp:
+            local_data = json.load(_local_fp)
+        local_guild_settings = local_data.get("guild_settings") if isinstance(local_data, dict) else None
+        sheet_guild_settings = data.get("guild_settings") if isinstance(data, dict) else None
+        if isinstance(local_guild_settings, dict) and not isinstance(sheet_guild_settings, dict):
+            data["guild_settings"] = local_guild_settings
+            print(f"[tsum] ローカルのサーバー別設定をSheetsへ復元: {len(local_guild_settings)} guild")
+    except Exception:
+        pass
     # 既存のSecret File/ローカルJSONからの初回起動時もSheetsへ移行する。
     save_json_store("tsum_config", data, CONFIG_FILE)
     return data
