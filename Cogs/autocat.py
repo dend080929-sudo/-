@@ -548,14 +548,6 @@ class AutoCatCog(commands.Cog):
                 print(f"[AUTOCAT DISCORD] achievement channel lookup failed: {type(exc).__name__}")
 
         async with self._achievement_lock:
-            # チャンネルを分けた場合、実績番号も各チャンネル内で独立させる。
-            try:
-                current = await tsum._achv_count_messages(channel) if tsum and channel else 0
-            except Exception as exc:
-                print(f"[AUTOCAT DISCORD] achievement counter lookup failed: {type(exc).__name__}")
-                current = 0
-            achievement_number = max(0, int(current or 0))
-
             if channel is None:
                 print(f"[AUTOCAT DISCORD] achievement post skipped: no channel guild={getattr(guild, 'id', None)}")
                 return
@@ -584,7 +576,7 @@ class AutoCatCog(commands.Cog):
             embed.description = (
                 f"**ご利用者**\n**{getattr(user, 'mention', display_name)}**\n"
                 f"**注文内容**\n**{OPERATION_LABELS[operation]}（{item_count}項目）**\n"
-                f"**実績番号**\n**-{achievement_number:02d}**\n{payment_text}"
+                f"{payment_text}"
             )
             try:
                 await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())

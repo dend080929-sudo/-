@@ -3435,13 +3435,6 @@ async def reset_menu_message(message):
         print(f"[menu] reset failed: {e}")
 
 async def post_public_result(guild, user, action, val, amount, points_used=0):
-    # 実績カウンター: 完了ごとに +1 して、指定チャンネル名へ反映を要求する。
-    # （公開実績チャンネルの設定有無に関係なく常にカウントする）
-    # 投稿前の番号を表示する（にゃんこ側と同じ -00 形式）。
-    achievement_number = achievement_count()
-    increment_achievement()
-    request_achievement_update()
-
     channel_id = guild_setting(guild.id, "public_result_channel_id") if guild else None
     if not guild or not channel_id:
         print(f"[public_result] 投稿先未設定 guild={getattr(guild, 'id', None)}", flush=True)
@@ -3473,12 +3466,14 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
     emb.description = (
         f"**ご利用者**\n**{user.mention}**\n"
         f"**注文内容**\n**{ticket_request_text(action, val)}**\n"
-        f"**実績番号**\n**-{achievement_number:02d}**\n"
         f"{payment_text}"
     )
     try:
         # 本文のメンション(通知)はしない。埋め込み内の表示のみ（通知は飛ばない）。
         await channel.send(embed=emb, allowed_mentions=discord.AllowedMentions.none())
+        # 投稿後にカウントを進める。投稿前に更新すると、チャンネル名が1件遅れる。
+        increment_achievement()
+        request_achievement_update()
     except Exception as e:
         print(f"[public_result] send failed channel={channel_id}: {type(e).__name__}: {e}", flush=True)
 
