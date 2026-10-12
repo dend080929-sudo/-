@@ -262,8 +262,9 @@ class PointsCog(commands.Cog):
                     )
             if payout_rows:
                 payout_text = "\n\n".join(payout_rows)
-                if len(payout_text) > 3900:
-                    payout_text = payout_text[:3890] + "\n…（長すぎるため省略）"
+                # DiscordのEmbedフィールドvalueは1024文字まで。
+                if len(payout_text) > 980:
+                    payout_text = payout_text[:970] + "\n…（長すぎるため省略）"
                 embed.add_field(
                     name="払い出し内容（Bot所有者限定）",
                     value=f"```\n{payout_text}\n```",
@@ -280,7 +281,9 @@ class PointsCog(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
         except Exception as exc:
             print(f"ユーザー情報送信失敗: user={member.id} {type(exc).__name__}: {exc}", flush=True)
-            raise
+            await interaction.followup.send(
+                "ユーザー情報の送信に失敗しました。表示内容が長すぎる可能性があります。", ephemeral=True
+            )
 
     @app_commands.command(name="ポイント付与", description="管理者がポイントを付与します")
     @app_commands.checks.has_permissions(administrator=True)
