@@ -26,6 +26,7 @@ from points_service import (
     commit_reserved_points,
     release_reserved_points,
 )
+from persistent_store import load_json_store, save_json_store
 
 _cfg_name = os.environ.get("TSUM_BOT_CONFIG", "bot_config.json")
 CONFIG_FILE = _cfg_name if os.path.isabs(_cfg_name) else os.path.join(HERE, _cfg_name)
@@ -35,10 +36,13 @@ TOKENS_FILE = os.path.join(HERE, "line_tokens_latest.json")
 SESSION_FILE = os.path.join(HERE, "tsum_session_headless.json")
 
 def load_config():
-    if not os.path.exists(CONFIG_FILE):
-        print(f"[bot] {CONFIG_FILE} がありません。既存Botのmain.py経由で起動してください。")
+    data = load_json_store("tsum_config", CONFIG_FILE)
+    if not data:
+        print(f"[bot] {CONFIG_FILE} とGoogle Sheets(tsum_config)がありません。既存Botのmain.py経由で起動してください。")
         sys.exit(1)
-    return json.load(open(CONFIG_FILE, encoding="utf-8-sig"))
+    # 既存のSecret File/ローカルJSONからの初回起動時もSheetsへ移行する。
+    save_json_store("tsum_config", data, CONFIG_FILE)
+    return data
 
 CONFIG = load_config()
 try:
@@ -450,7 +454,8 @@ if PAYPAY_PROXY_URL:
 from discord import app_commands
 
 def save_config():
-    _jdump_atomic(CONFIG_FILE, CONFIG, indent=2)
+    # Google Sheetsを正本にしつつ、API障害時のローカルフォールバックも更新する。
+    save_json_store("tsum_config", CONFIG, CONFIG_FILE)
 
 
 SALES_FILE = os.path.join(HERE, CONFIG.get("sales_file", "tsum_sales.json"))

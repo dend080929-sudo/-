@@ -5,6 +5,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes, serialization
 
 import os as _os, builtins as _bi
+from persistent_store import load_runtime_json, save_runtime_json
 try:
     _DBG_LOG = open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "tsum_debug.log"),
                     "a", encoding="utf-8", errors="replace")
@@ -29,10 +30,9 @@ def _device_id():
     import uuid
     p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "device_id.json")
     try:
-        if _os.path.exists(p):
-            v = (json.load(open(p, encoding="utf-8-sig")) or {}).get("device_id")
-            if v:
-                return v
+        v = (load_runtime_json(p, {}) or {}).get("device_id")
+        if v:
+            return v
     except Exception:
         pass
     v = uuid.uuid4().hex
@@ -69,6 +69,7 @@ def _jdump_atomic(path, obj, **kw):
             f.flush()
             _os.fsync(f.fileno())
         _os.replace(tmp, path)
+        save_runtime_json(path, obj)
     except Exception:
         try:
             if _os.path.exists(tmp):
@@ -409,7 +410,7 @@ def _tor_proxies_from_config():
         url = env
     else:
         try:
-            d = json.load(open(_BOT_CONFIG_FILE, encoding="utf-8-sig"))
+            d = load_runtime_json(_BOT_CONFIG_FILE, {})
         except Exception:
             return None
         if not d.get("tor_enabled"):
@@ -502,7 +503,7 @@ def idpw_login():
         LAST_ERROR = "アカウント情報が入力されていません。"
         return False
     try:
-        cred = json.load(open(CREDENTIALS_FILE, encoding="utf-8-sig"))
+        cred = load_runtime_json(CREDENTIALS_FILE, {})
         import line_password_login
         print("[token] ID/PW ログイン(access.line.me)を試行…")
         out = line_password_login.password_login(cred["id"], cred["password"], save=True, verbose=True)
@@ -520,7 +521,7 @@ def obtain_user_token(force_idpw=False):
     import os
     if force_idpw:
         if idpw_login():
-            tok2 = json.load(open(TOKENS_FILE, encoding="utf-8-sig"))
+            tok2 = load_runtime_json(TOKENS_FILE, {})
             res = trident_authenticate(tok2["access_token"], use_refresh=False)
             if isinstance(res, dict) and res.get("userToken"):
                 return res
@@ -530,7 +531,7 @@ def obtain_user_token(force_idpw=False):
                 LAST_ERROR = "ID/PWログインに失敗しました。"
         return None
 
-    tok = json.load(open(TOKENS_FILE, encoding="utf-8-sig")) if os.path.exists(TOKENS_FILE) else {}
+    tok = load_runtime_json(TOKENS_FILE, {})
     at, rt, cid = tok.get("access_token"), tok.get("refresh_token"), tok.get("client_id","1381161556")
     if at:
         res = trident_authenticate(at, use_refresh=False)
@@ -553,7 +554,7 @@ def obtain_user_token(force_idpw=False):
         else:
             print("[token] refresh 失効 → ID/PW 再ログインを試行…")
     if idpw_login():
-        tok2 = json.load(open(TOKENS_FILE, encoding="utf-8-sig"))
+        tok2 = load_runtime_json(TOKENS_FILE, {})
         res = trident_authenticate(tok2["access_token"], use_refresh=False)
         if isinstance(res, dict) and res.get("userToken"):
             return res
@@ -668,7 +669,7 @@ def headless_session(save=True, verbose=True, force_idpw=False):
         "ts": int(time.time()),
     }
     if save and sess["userid"] and sess["hash"] and sess["checkval"]:
-        json.dump(sess, open(SESSION_FILE,"w",encoding="utf-8"), ensure_ascii=False, indent=2)
+        _jdump_atomic(SESSION_FILE, sess, indent=2)
         if verbose: print(f"[headless] session 保存 -> {SESSION_FILE}")
     return sess
 

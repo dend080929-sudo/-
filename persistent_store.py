@@ -8,6 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 _CACHE = {}
+_RUNTIME_MIGRATED = set()
 _CACHE_LOCK = threading.RLock()
 _WRITE_LOCK = threading.Lock()
 
@@ -24,18 +25,18 @@ def _client():
     return gspread.authorize(credentials)
 
 
-def _read_fallback(fallback_file: str) -> dict:
+def _read_fallback(fallback_file: str):
     path = Path(fallback_file)
     if path.exists():
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) else {}
+            return value
         except (OSError, json.JSONDecodeError):
             pass
     return {}
 
 
-def _read_sheet(sheet_name: str) -> dict:
+def _read_sheet(sheet_name: str):
     client = _client()
     if not client:
         return {}
@@ -48,10 +49,10 @@ def _read_sheet(sheet_name: str) -> dict:
     if not value:
         return {}
     decoded = json.loads(value)
-    return decoded if isinstance(decoded, dict) else {}
+    return decoded
 
 
-def load_json_store(sheet_name: str, fallback_file: str) -> dict:
+def load_json_store(sheet_name: str, fallback_file: str):
     with _CACHE_LOCK:
         if sheet_name in _CACHE:
             return copy.deepcopy(_CACHE[sheet_name])
@@ -86,7 +87,7 @@ def _write_sheet(sheet_name: str, encoded: str) -> None:
         print(f"スプレッドシート({sheet_name})保存エラー: {exc}")
 
 
-def save_json_store(sheet_name: str, data: dict, fallback_file: str) -> None:
+def save_json_store(sheet_name: str, data, fallback_file: str) -> None:
     encoded = json.dumps(data, ensure_ascii=False)
     with _CACHE_LOCK:
         _CACHE[sheet_name] = copy.deepcopy(data)
@@ -99,6 +100,31 @@ def save_json_store(sheet_name: str, data: dict, fallback_file: str) -> None:
     # followupを返せる。保存完了前の再起動でデータが欠落するのを防ぐ。
     with _WRITE_LOCK:
         _write_sheet(sheet_name, encoded)
+
+
+def runtime_sheet_name(path: str) -> str:
+    """Return a stable, non-secret worksheet name for a runtime JSON file."""
+    safe = Path(path).stem.replace(" ", "_")
+    return f"runtime_{safe}"[:90]
+
+
+def load_runtime_json(path: str, default=None):
+    """Load a runtime JSON file from Sheets first, with local fallback."""
+    sheet_name = runtime_sheet_name(path)
+    value = load_json_store(sheet_name, path)
+    # 初回だけ、既存ローカル認証情報をSheetsへ移行する。
+    # load_json_storeのキャッシュに入った後は再書き込みしない。
+    with _CACHE_LOCK:
+        should_migrate = sheet_name not in _RUNTIME_MIGRATED
+        _RUNTIME_MIGRATED.add(sheet_name)
+    if should_migrate and value:
+        save_json_store(sheet_name, value, path)
+    return default if value is None else value
+
+
+def save_runtime_json(path: str, data) -> None:
+    """Write a runtime JSON file locally and mirror it to Sheets."""
+    save_json_store(runtime_sheet_name(path), data, path)
 
 
 def preload_json_stores(stores: list[tuple[str, str]]) -> None:

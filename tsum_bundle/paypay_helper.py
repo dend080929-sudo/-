@@ -3,6 +3,7 @@ import sys, os, json, re, asyncio
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
+from persistent_store import load_runtime_json, save_runtime_json
 
 CRED = os.path.join(_HERE, "paypay_credential.json")
 
@@ -38,6 +39,7 @@ def _jdump_atomic(path, obj, **kw):
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
+        save_runtime_json(path, obj)
     except Exception:
         try:
             if os.path.exists(tmp):
@@ -48,10 +50,10 @@ def _jdump_atomic(path, obj, **kw):
 
 
 def _load_creds(token_file):
-    if not token_file or not os.path.exists(token_file):
+    if not token_file:
         return None
     try:
-        return json.load(open(token_file, encoding="utf-8-sig"))
+        return load_runtime_json(token_file, {})
     except Exception:
         return None
 

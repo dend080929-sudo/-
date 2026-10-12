@@ -115,7 +115,11 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 - PayPay返金依頼の管理画面記録とGoogle Sheets会計台帳を維持します。
 - 高度なキャラ個別指定・数量指定・詳細ステージ編集は利用者向け注文から外しています。
 
-`/autocat/`はDiscordで注文する案内画面です。PayPay返金記録等の管理者専用ページは残しています。ゲーム処理APIは`autocat_main.py`にあります。
+` /autocat/`はDiscordで注文する案内画面です。PayPay返金記録等の管理者専用ページは残しています。ゲーム処理APIは`autocat_main.py`にあります。
+
+### 設定・認証情報の永続化
+
+設定、ツムツム設定、定期お知らせ設定、LINE/PayPayの認証情報・セッションは、Google Sheetsの各ワークシートへ保存し、再起動時はSheetsを優先して復元します。既存のローカルJSONは障害時のフォールバックとして残します。Google Sheetsへ接続するための`GOOGLE_CREDENTIALS_JSON`と`SPREADSHEET_NAME`だけは、起動前に必要なBootstrap設定のためRender Secretに残します。
 
 ## リポジトリ構成
 

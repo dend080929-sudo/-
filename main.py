@@ -172,6 +172,7 @@ RUNTIME_DATA_DIR = os.path.abspath(os.environ.get("RUNTIME_DATA_DIR", "/tmp/disc
 os.makedirs(RUNTIME_DATA_DIR, mode=0o700, exist_ok=True)
 BACKUP_DIR = os.path.join(RUNTIME_DATA_DIR, "backups")
 ANNOUNCE_CONFIG_FILE = os.path.join(RUNTIME_DATA_DIR, "announce_config.json")
+_ANNOUNCE_SHEETS_BOOTSTRAPPED = False
 
 # -------------------------------------------------------------
 # 📊 Googleスプレッドシート接続設定（完全永続化 & サーバー別設定管理）
@@ -256,24 +257,22 @@ def perform_manual_backup():
         return False, 0
 
 def load_announce_config():
-    if not os.path.exists(ANNOUNCE_CONFIG_FILE):
-        default_config = {
-            "channel_id": 0,
-            "interval_hours": 24,
-            "message": "ショップは24時間稼働中です。\nご用件やチケット作成はチャンネル内のパネルからどうぞ！"
-        }
-        with open(ANNOUNCE_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_config, f, ensure_ascii=False, indent=4)
-        return default_config
-    try:
-        with open(ANNOUNCE_CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {"channel_id": 0, "interval_hours": 24, "message": "ショップ稼働中！"}
+    global _ANNOUNCE_SHEETS_BOOTSTRAPPED
+    default_config = {
+        "channel_id": 0,
+        "interval_hours": 24,
+        "message": "ショップは24時間稼働中です。\nご用件やチケット作成はチャンネル内のパネルからどうぞ！"
+    }
+    data = load_json_store("announce_config", ANNOUNCE_CONFIG_FILE)
+    merged = {**default_config, **data}
+    # 既存のローカル設定が残っている場合も、最初の読み込みでSheetsへ移行する。
+    if not _ANNOUNCE_SHEETS_BOOTSTRAPPED:
+        save_json_store("announce_config", merged, ANNOUNCE_CONFIG_FILE)
+        _ANNOUNCE_SHEETS_BOOTSTRAPPED = True
+    return merged
 
 def save_announce_config(config):
-    with open(ANNOUNCE_CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=4)
+    save_json_store("announce_config", config, ANNOUNCE_CONFIG_FILE)
 
 def has_admin_role(member: discord.Member) -> bool:
     if member.guild_permissions.administrator:

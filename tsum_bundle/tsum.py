@@ -8,21 +8,18 @@ CREDS_FILE    = os.path.join(HERE, "line_credentials.json")
 TOKENS_FILE   = os.path.join(HERE, "line_tokens_latest.json")
 
 import tsum_login
+from persistent_store import load_runtime_json
 
 
 def load_accounts():
-    if os.path.exists(ACCOUNTS_FILE):
-        return json.load(open(ACCOUNTS_FILE, encoding="utf-8-sig"))
-    return {}
+    return load_runtime_json(ACCOUNTS_FILE, {})
 
 
 def load_creds():
-    if os.path.exists(CREDS_FILE):
-        try:
-            return json.load(open(CREDS_FILE, encoding="utf-8-sig"))
-        except Exception:
-            return {}
-    return {}
+    try:
+        return load_runtime_json(CREDS_FILE, {})
+    except Exception:
+        return {}
 
 
 def current_label():
@@ -36,9 +33,9 @@ def current_label():
 
 def tsum_status_check_token():
     try:
-        if not os.path.exists(TOKENS_FILE):
+        tok = load_runtime_json(TOKENS_FILE, {})
+        if not tok:
             return "none", "保存トークンなし"
-        tok = json.load(open(TOKENS_FILE, encoding="utf-8-sig"))
         at = tok.get("access_token")
         if not at:
             return "none", "access_token空"
