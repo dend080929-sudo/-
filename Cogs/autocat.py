@@ -23,8 +23,8 @@ except Exception as exc:  # Keep the main bot usable if AutoCat dependencies fai
 # Advanced per-character and detailed VIP editors are not included in this Discord
 # panel; billing is always calculated by the same server-side AutoCat API.
 CATALOG = {
-    "s1": (
-        "アイテム・ステージ",
+    "items": (
+        "アイテム",
         [
             ("猫缶 58000", "catfood"), ("XP 99999999", "xp"), ("NP 9999", "np"),
             ("にゃんこチケット 999", "normal_tickets"), ("レアチケット 999", "rare_tickets"),
@@ -32,17 +32,22 @@ CATALOG = {
             ("リーダーシップ 999", "leadership"), ("バトルアイテム全種", "battle_items"),
             ("キャッツアイ全種", "catseyes"), ("ネコビタン全種", "catamins"),
             ("城素材全種", "base_materials"), ("マタタビ全種", "matatabi"),
-            ("本能玉全種", "talent_orbs"), ("メインステージ(お宝金＆クリア)", "main_story_clear"),
+            ("本能玉全種", "talent_orbs"),
+        ],
+    ),
+    "stages": (
+        "ステージ",
+        [
+            ("メインステージ(お宝金＆クリア)", "main_story_clear"),
             ("メインゾンビステージ全クリア", "zombie_clear"), ("魔界編全クリア", "aku_clear"),
             ("レジェンド全クリア", "legend_clear"), ("真レジェンド全クリア", "true_legend_clear"),
             ("零レジェンド全クリア", "zero_legend_clear"), ("イベントステージ全クリア", "event_clear"),
             ("全ステージ全クリア", "all_stage_clear"),
         ],
     ),
-    "s2": (
-        "システム・ガマトト",
+    "system": (
+        "システム",
         [
-            ("ガマトトLv.Max", "gamatoto_max"), ("ガマトト助手全レジェンド化", "gamatoto_helpers"),
             ("オトート全城強化Lv.Max", "ototo_max"), ("にゃんこ神社Lv.Max", "cat_shrine_max"),
             ("全施設 Lv.Max", "base_upgrades_max"), ("ゴールド会員化", "gold_membership"),
             ("編成スロット数最大化", "slots_max"), ("にゃんこメダル全解放", "medals_all"),
@@ -50,7 +55,11 @@ CATALOG = {
             ("敵キャラ図鑑全解放", "unlock_enemy_guide"), ("プレイ時間 +720時間", "add_playtime_720h"),
         ],
     ),
-    "s3": (
+    "gamatoto": (
+        "ガマトト",
+        [("ガマトトLv.Max", "gamatoto_max"), ("ガマトト助手全レジェンド化", "gamatoto_helpers")],
+    ),
+    "characters": (
         "キャラクター",
         [
             ("全キャラ解放", "unlock_all_cats"), ("全キャラLv.Max+", "max_all_cats_plus"),
@@ -59,6 +68,18 @@ CATALOG = {
         ],
     ),
 }
+CATALOG_API_GROUP = {
+    "items": "s1", "stages": "s1", "system": "s2", "gamatoto": "s2", "characters": "s3",
+}
+
+
+def serialize_selected_categories(selected_by_category: dict[str, set[str]]) -> dict[str, list[str]]:
+    """Map display categories to the existing AutoCat API's s1/s2/s3 groups."""
+    payload = {"s1": [], "s2": [], "s3": []}
+    for category, values in selected_by_category.items():
+        api_group = CATALOG_API_GROUP[category]
+        payload[api_group].extend(sorted(values))
+    return payload
 OPERATION_LABELS = {"daiko": "引き継ぎコード代行", "create": "新規アカウント作成", "clone": "アカウント複製"}
 
 
@@ -177,8 +198,8 @@ class AutoCatWizard(discord.ui.View):
         self.cog = cog
         self.owner_id = owner_id
         self.operation = "daiko"
-        self.category = "s1"
-        self.categories = {"s1"}
+        self.category = "items"
+        self.categories = {"items"}
         self.selected: dict[str, set[str]] = {key: set() for key in CATALOG}
         self.add_item(OperationSelect(self))
         self.add_item(CategorySelect(self))
@@ -261,7 +282,7 @@ class AutoCatInputModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         payload = {
-            "selected": {key: sorted(values) for key, values in self.wizard.selected.items()},
+            "selected": serialize_selected_categories(self.wizard.selected),
             "char_list": [],
             "custom_amounts": {},
             "custom_playtime": "",
