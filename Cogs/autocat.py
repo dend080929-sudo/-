@@ -125,15 +125,27 @@ class CategorySelect(discord.ui.Select):
     def __init__(self, wizard: "AutoCatWizard"):
         self.wizard = wizard
         super().__init__(
-            placeholder="代行する項目のカテゴリ",
+            placeholder="代行するカテゴリ（複数選択可）",
             min_values=1,
-            max_values=1,
-            options=[discord.SelectOption(label=v[0], value=k) for k, v in CATALOG.items()],
+            max_values=len(CATALOG),
+            options=[
+                discord.SelectOption(label=v[0], value=k, default=k in wizard.categories)
+                for k, v in CATALOG.items()
+            ],
             row=1,
         )
 
     async def callback(self, interaction: discord.Interaction):
-        self.wizard.category = self.values[0]
+        chosen = set(self.values)
+        removed = self.wizard.categories - chosen
+        for key in removed:
+            self.wizard.selected[key].clear()
+        added = chosen - self.wizard.categories
+        self.wizard.categories = chosen
+        if added:
+            self.wizard.category = next(key for key in CATALOG if key in added)
+        elif self.wizard.category not in chosen:
+            self.wizard.category = next(key for key in CATALOG if key in chosen)
         await self.wizard.refresh(interaction)
 
 
@@ -166,6 +178,7 @@ class AutoCatWizard(discord.ui.View):
         self.owner_id = owner_id
         self.operation = "daiko"
         self.category = "s1"
+        self.categories = {"s1"}
         self.selected: dict[str, set[str]] = {key: set() for key in CATALOG}
         self.add_item(OperationSelect(self))
         self.add_item(CategorySelect(self))
@@ -181,9 +194,11 @@ class AutoCatWizard(discord.ui.View):
             status = f"選択項目: **{item_count}個**\n新規作成数は注文モーダルで1〜2個から指定できます。"
         else:
             status = f"選択項目: **{item_count}個**"
+        chosen_categories = "、".join(CATALOG[key][0] for key in CATALOG if key in self.categories)
+        status += f"\n選択カテゴリ: {chosen_categories}\n現在の項目リスト: **{CATALOG[self.category][0]}**"
         unit_price = int(getattr(autocat, "AUTOCAT_ITEM_PRICE_YEN", 50)) if autocat else 50
         status += f"\n\n初回は成功3回まで無料。その後は1項目{unit_price}円です。VIPロール保持者は無料です。"
-        return f"## にゃんこ代行自販機\nサービス: **{operation_label}**\nカテゴリ: **{CATALOG[self.category][0]}**\n{status}"
+        return f"## にゃんこ代行自販機\nサービス: **{operation_label}**\n{status}"
 
     async def refresh(self, interaction: discord.Interaction):
         self.remove_item(next(item for item in self.children if isinstance(item, ItemSelect)))
@@ -195,6 +210,15 @@ class AutoCatWizard(discord.ui.View):
             await interaction.response.send_message("この注文パネルを開いた本人だけ操作できます。", ephemeral=True)
             return False
         return True
+
+    @discord.ui.button(label="次の選択カテゴリへ", style=discord.ButtonStyle.secondary, row=3)
+    async def next_category(self, interaction: discord.Interaction, button: discord.ui.Button):
+        selected = [key for key in CATALOG if key in self.categories]
+        if len(selected) < 2:
+            await interaction.response.send_message("カテゴリを2つ以上選ぶと、ここで表示する項目リストを切り替えられます。", ephemeral=True)
+            return
+        self.category = selected[(selected.index(self.category) + 1) % len(selected)]
+        await self.refresh(interaction)
 
     @discord.ui.button(label="入力・注文へ進む", style=discord.ButtonStyle.success, row=4)
     async def continue_order(self, interaction: discord.Interaction, button: discord.ui.Button):
