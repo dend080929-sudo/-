@@ -3473,7 +3473,20 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
         await channel.send(embed=emb, allowed_mentions=discord.AllowedMentions.none())
         # 投稿後にカウントを進める。投稿前に更新すると、チャンネル名が1件遅れる。
         increment_achievement()
-        request_achievement_update()
+        # Event workerだけに任せると、統合Botの起動順によって更新が遅れる
+        # ことがあるため、投稿成功直後に直接反映する。Discordの名前変更
+        # レート制限中だけworkerへ回して、制限解除後に再試行する。
+        now = time.time()
+        while _achv_rename_times and now - _achv_rename_times[0] >= _ACHV_RENAME_WINDOW:
+            _achv_rename_times.popleft()
+        if len(_achv_rename_times) < _ACHV_RENAME_LIMIT:
+            status = await _achv_apply_name()
+            if status == "renamed":
+                _achv_rename_times.append(time.time())
+            elif status == "fail":
+                request_achievement_update()
+        else:
+            request_achievement_update()
     except Exception as e:
         print(f"[public_result] send failed channel={channel_id}: {type(e).__name__}: {e}", flush=True)
 
