@@ -1288,6 +1288,29 @@ async def _achv_apply_name():
         return "fail"
 
 
+async def _rename_achievement_channel(channel):
+    """投稿に使った実績チャンネルを直接数えて名前を更新する。"""
+    count = await _achv_count_messages(channel)
+    if count is None:
+        print(f"[achv] 投稿先チャンネルの履歴を取得できません id={getattr(channel, 'id', '?')}", flush=True)
+        return "fail"
+    new_name = f"{_achv_base_name(channel.name)}-{count:02d}"
+    if channel.name == new_name:
+        print(f"[achv] チャンネル名は最新です id={channel.id} name={channel.name}", flush=True)
+        return "noop"
+    try:
+        await channel.edit(name=new_name, reason="ツムツム実績投稿後の件数更新")
+        print(f"[achv] チャンネル名を更新しました id={channel.id} name={new_name} count={count}", flush=True)
+        return "renamed"
+    except discord.Forbidden as exc:
+        print(f"[achv] チャンネル名変更Forbidden id={channel.id} name={channel.name}: {exc}", flush=True)
+    except discord.HTTPException as exc:
+        print(f"[achv] チャンネル名変更HTTP {getattr(exc, 'status', '?')} id={channel.id}: {exc}", flush=True)
+    except Exception as exc:
+        print(f"[achv] チャンネル名変更失敗 id={channel.id}: {type(exc).__name__}: {exc}", flush=True)
+    return "fail"
+
+
 async def _achievement_channel_updater():
     """実績カウンターのチャンネル名を、レート制限を守りつつ最新値へ反映する worker。"""
     await bot.wait_until_ready()
@@ -3480,7 +3503,8 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
         while _achv_rename_times and now - _achv_rename_times[0] >= _ACHV_RENAME_WINDOW:
             _achv_rename_times.popleft()
         if len(_achv_rename_times) < _ACHV_RENAME_LIMIT:
-            status = await _achv_apply_name()
+            # 設定から別チャンネルを探し直さず、実際に投稿できたチャンネルを更新する。
+            status = await _rename_achievement_channel(channel)
             if status == "renamed":
                 _achv_rename_times.append(time.time())
             elif status == "fail":
