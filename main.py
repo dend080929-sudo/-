@@ -127,7 +127,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     if isinstance(error, app_commands.CheckFailure):
         message = "このコマンドを実行する権限がありません。"
     else:
-        print(f"スラッシュコマンドエラー: {error}")
+        import traceback
+        print(f"スラッシュコマンドエラー: {type(error).__name__}: {error}", flush=True)
+        traceback.print_exception(type(error), error, error.__traceback__)
         message = "コマンドの処理中にエラーが発生しました。時間を置いて再試行してください。"
     if interaction.response.is_done():
         await interaction.followup.send(message, ephemeral=True)

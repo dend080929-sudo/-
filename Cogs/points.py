@@ -210,25 +210,43 @@ class PointsCog(commands.Cog):
                 "ユーザー情報を読み込めませんでした。少し時間を置いて再試行してください。", ephemeral=True
             )
             return
-        embed = discord.Embed(
-            title="ユーザー情報",
-            description=f"{member.mention}\n表示名: `{member.display_name}`\nユーザーネーム: `{member.name}`\nDiscord ID: `{member.id}`",
-            color=discord.Color.blue(),
-            timestamp=discord.utils.utcnow(),
-        )
-        embed.add_field(name="保有ポイント", value=f"**{int(info.get('points', 0) or 0):,}ポイント**", inline=True)
-        embed.add_field(name="購入回数", value=f"**{int(info.get('purchase_count', 0) or 0):,}回**", inline=True)
-        embed.add_field(name="累計支払額", value=f"**{int(info.get('total_paid_yen', 0) or 0):,}円**", inline=True)
-        embed.add_field(name="累計使用ポイント", value=f"**{int(info.get('total_points_used', 0) or 0):,}ポイント**", inline=True)
-        embed.add_field(name="招待リンク", value="発行済みリンクは参加時に自動判定", inline=True)
-        embed.add_field(name="招待元", value=f"`{info.get('referred_by') or 'なし'}`", inline=True)
-        purchases = info.get("purchases", [])[-10:]
+        try:
+            if not isinstance(info, dict):
+                raise TypeError(f"user info is {type(info).__name__}, not dict")
+            embed = discord.Embed(
+                title="ユーザー情報",
+                description=f"{member.mention}\n表示名: `{member.display_name}`\nユーザーネーム: `{member.name}`\nDiscord ID: `{member.id}`",
+                color=discord.Color.blue(),
+                timestamp=discord.utils.utcnow(),
+            )
+            def _number(key):
+                try:
+                    return int(info.get(key, 0) or 0)
+                except (TypeError, ValueError):
+                    return 0
+            embed.add_field(name="保有ポイント", value=f"**{_number('points'):,}ポイント**", inline=True)
+            embed.add_field(name="購入回数", value=f"**{_number('purchase_count'):,}回**", inline=True)
+            embed.add_field(name="累計支払額", value=f"**{_number('total_paid_yen'):,}円**", inline=True)
+            embed.add_field(name="累計使用ポイント", value=f"**{_number('total_points_used'):,}ポイント**", inline=True)
+            embed.add_field(name="招待リンク", value="発行済みリンクは参加時に自動判定", inline=True)
+            embed.add_field(name="招待元", value=f"`{info.get('referred_by') or 'なし'}`", inline=True)
+            raw_purchases = info.get("purchases", [])
+            purchases = [row for row in raw_purchases if isinstance(row, dict)][-10:] if isinstance(raw_purchases, list) else []
+        except Exception as exc:
+            print(f"ユーザー情報Embed作成失敗: user={member.id} {type(exc).__name__}: {exc}", flush=True)
+            await interaction.followup.send("ユーザー情報の表示中にエラーが発生しました。", ephemeral=True)
+            return
         if purchases:
             lines = []
             for row in reversed(purchases):
+                try:
+                    paid_yen = int(row.get("paid_yen", 0) or 0)
+                except (TypeError, ValueError):
+                    paid_yen = 0
+                at_text = str(row.get("at", ""))[:19]
                 lines.append(
-                    f"`{row.get('at', '')[:19]}` {row.get('product_name', '不明')} ×{row.get('quantity', 1)} "
-                    f"— {int(row.get('paid_yen', 0)):,}円（{row.get('payment_method', '不明')}）"
+                    f"`{at_text}` {row.get('product_name', '不明')} ×{row.get('quantity', 1)} "
+                    f"— {paid_yen:,}円（{row.get('payment_method', '不明')}）"
                 )
             embed.add_field(name="最近の購入（最大10件）", value="\n".join(lines)[:1024], inline=False)
         else:
@@ -240,7 +258,7 @@ class PointsCog(commands.Cog):
                 content = decrypt_payout_content(ciphertext)
                 if content:
                     payout_rows.append(
-                        f"【{row.get('at', '')[:19]} / {row.get('product_name', '不明')}】\n{content}"
+                        f"【{str(row.get('at', ''))[:19]} / {row.get('product_name', '不明')}】\n{content}"
                     )
             if payout_rows:
                 payout_text = "\n\n".join(payout_rows)
@@ -258,7 +276,11 @@ class PointsCog(commands.Cog):
                     inline=False,
                 )
         embed.set_footer(text="元のユーザー情報は維持。払い出し本文はBot所有者の非公開応答だけに表示します。")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        try:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as exc:
+            print(f"ユーザー情報送信失敗: user={member.id} {type(exc).__name__}: {exc}", flush=True)
+            raise
 
     @app_commands.command(name="ポイント付与", description="管理者がポイントを付与します")
     @app_commands.checks.has_permissions(administrator=True)
