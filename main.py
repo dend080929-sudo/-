@@ -207,6 +207,54 @@ def save_server_config(config):
     save_json_store("server_config", config, "server_config.json")
 
 
+def _member_log_channel_id(guild_id):
+    """Return the separately configured join/leave log channel for a guild."""
+    cfg = load_server_config()
+    channels = cfg.get("member_log_channel_ids") or {}
+    value = channels.get(str(guild_id)) if isinstance(channels, dict) else None
+    return int(value) if value else 0
+
+
+async def _send_member_log(member, joined):
+    channel_id = _member_log_channel_id(member.guild.id)
+    if not channel_id:
+        return
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception as exc:
+            print(f"[member-log] チャンネル取得失敗 guild={member.guild.id} channel={channel_id}: {exc}", flush=True)
+            return
+    if joined:
+        title = "メンバーが参加しました"
+        color = 0x2ECC71
+        description = f"{member.mention} がサーバーに参加しました。"
+    else:
+        title = "メンバーが退出しました"
+        color = 0xE74C3C
+        description = f"{member}（ID: {member.id}）がサーバーを退出しました。"
+    embed = discord.Embed(title=title, description=description, color=color,
+                          timestamp=discord.utils.utcnow())
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.add_field(name="ユーザー", value=f"{member}（`{member.id}`）", inline=False)
+    embed.add_field(name="現在のメンバー数", value=str(member.guild.member_count or "不明"), inline=True)
+    try:
+        await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    except Exception as exc:
+        print(f"[member-log] 送信失敗 guild={member.guild.id} channel={channel_id}: {type(exc).__name__}: {exc}", flush=True)
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    await _send_member_log(member, True)
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    await _send_member_log(member, False)
+
+
 
 def load_data():
     client = get_gspread_client()
@@ -633,6 +681,30 @@ async def config_command(
     embed.add_field(name="📜 実績/ログチャンネル", value=f"<#{cfg['log_channel_id']}>" if cfg['log_channel_id'] else "未設定", inline=False)
 
     await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="入退室ログ設定", description="メンバーの入室・退室を記録するチャンネルを設定します")
+@app_commands.describe(channel="入退室ログを送るチャンネル。空欄で解除")
+@app_commands.checks.has_permissions(administrator=True)
+async def member_log_channel_command(interaction: discord.Interaction,
+                                      channel: discord.TextChannel = None):
+    cfg = load_server_config()
+    channels = cfg.get("member_log_channel_ids")
+    if not isinstance(channels, dict):
+        channels = {}
+    key = str(interaction.guild_id)
+    if channel is None:
+        channels.pop(key, None)
+        cfg["member_log_channel_ids"] = channels
+        save_server_config(cfg)
+        await interaction.response.send_message("入退室ログを解除しました。", ephemeral=True)
+        return
+    channels[key] = str(channel.id)
+    cfg["member_log_channel_ids"] = channels
+    save_server_config(cfg)
+    await interaction.response.send_message(
+        f"入退室ログの送信先を {channel.mention} に設定しました。\n"
+        "今後のメンバー参加・退出をこのチャンネルへ記録します。", ephemeral=True)
 
 @bot.tree.command(name="チケット設置", description="チケット作成パネルを送信します。")
 @app_commands.checks.has_permissions(administrator=True)
