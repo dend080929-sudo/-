@@ -146,9 +146,9 @@ class CategorySelect(discord.ui.Select):
     def __init__(self, wizard: "AutoCatWizard"):
         self.wizard = wizard
         super().__init__(
-            placeholder="代行するカテゴリ（最大4つ・複数選択可）",
+            placeholder="代行するカテゴリ（複数選択可）",
             min_values=1,
-            max_values=min(4, len(CATALOG)),
+            max_values=len(CATALOG),
             options=[
                 discord.SelectOption(label=v[0], value=k, default=k in wizard.categories)
                 for k, v in CATALOG.items()
@@ -163,11 +163,18 @@ class CategorySelect(discord.ui.Select):
             self.wizard.selected[key].clear()
         self.wizard.categories = chosen
         for child in tuple(self.wizard.children):
-            if isinstance(child, (CategorySelect, OperationSelect)):
+            if isinstance(child, (CategorySelect, OperationSelect)) or (
+                isinstance(child, discord.ui.Button) and child.label == "入力・注文へ進む"
+            ):
                 self.wizard.remove_item(child)
         for row, key in enumerate(category for category in CATALOG if category in chosen):
             self.wizard.add_item(ItemSelect(self.wizard, key, row=row))
         await interaction.response.edit_message(content=self.wizard.summary(), view=self.wizard)
+        await interaction.followup.send(
+            "すべてのカテゴリで代行項目を選び終えたら、こちらから進んでください。",
+            view=AutoCatContinueView(self.wizard),
+            ephemeral=True,
+        )
 
 
 class ItemSelect(discord.ui.Select):
@@ -239,10 +246,29 @@ class AutoCatWizard(discord.ui.View):
 
     @discord.ui.button(label="入力・注文へ進む", style=discord.ButtonStyle.success, row=4)
     async def continue_order(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.open_input(interaction)
+
+    async def open_input(self, interaction: discord.Interaction):
         if self.operation != "clone" and not any(self.selected.values()):
             await interaction.response.send_message("カテゴリを選び、表示された各項目メニューから代行内容を選択してください。", ephemeral=True)
             return
         await interaction.response.send_modal(AutoCatInputModal(self))
+
+
+class AutoCatContinueView(discord.ui.View):
+    def __init__(self, wizard: AutoCatWizard):
+        super().__init__(timeout=900)
+        self.wizard = wizard
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.wizard.owner_id:
+            await interaction.response.send_message("この注文を開始した本人だけ操作できます。", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="入力・注文へ進む", style=discord.ButtonStyle.success)
+    async def continue_order(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.wizard.open_input(interaction)
 
 
 class AutoCatPanelView(discord.ui.View):
