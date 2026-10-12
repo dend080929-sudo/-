@@ -3417,17 +3417,22 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
 
     channel_id = guild_setting(guild.id, "public_result_channel_id") if guild else None
     if not guild or not channel_id:
+        _dbg(f"[public_result] 投稿先未設定 guild={getattr(guild, 'id', None)}")
         return
     try:
         channel_id = int(channel_id)
     except (TypeError, ValueError):
+        _dbg(f"[public_result] 投稿先チャンネルIDが不正: {channel_id!r}")
         return
 
-    channel = guild.get_channel(channel_id)
+    # ギルド側のキャッシュだけでなくBot全体のキャッシュから探す。
+    # 貸し出し先や再接続直後は guild.get_channel() だけでは見つからないことがある。
+    channel = bot.get_channel(channel_id) or guild.get_channel(channel_id)
     if channel is None:
         try:
-            channel = await guild.fetch_channel(channel_id)
-        except Exception:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception as exc:
+            _dbg(f"[public_result] 投稿先チャンネル取得失敗 id={channel_id}: {type(exc).__name__}: {exc}")
             return
 
     emb = discord.Embed(color=0x2ecc71)
@@ -3448,7 +3453,7 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
         # 本文のメンション(通知)はしない。埋め込み内の表示のみ（通知は飛ばない）。
         await channel.send(embed=emb, allowed_mentions=discord.AllowedMentions.none())
     except Exception as e:
-        print(f"[public_result] send failed: {e}")
+        _dbg(f"[public_result] send failed channel={channel_id}: {type(e).__name__}: {e}")
 
 def ticket_owner_user(guild, owner_id, fallback):
     try:
@@ -4800,11 +4805,15 @@ async def slash_achievement_set(interaction: discord.Interaction, count: int):
 @bot.tree.command(name="ツムツム実績カウント", description="現在の実績カウント(完了件数)を表示します")
 async def slash_achievement_show(interaction: discord.Interaction):
     n = achievement_count()
-    cid = CONFIG.get("achievement_channel_id")
-    where = f"<#{cid}>" if cid else "未設定"
+    counter_id = CONFIG.get("achievement_channel_id")
+    counter_where = f"<#{counter_id}>" if counter_id else "未設定"
+    public_id = guild_setting(interaction.guild_id, "public_result_channel_id")
+    public_where = f"<#{public_id}>" if public_id else "未設定"
     request_achievement_update()
     await interaction.response.send_message(
-        f"現在の実績カウント: **{n} 件**\n表示チャンネル: {where}", ephemeral=True)
+        f"現在の実績カウント: **{n} 件**\n"
+        f"ツムツム実績の投稿先: {public_where}\n"
+        f"件数表示チャンネル: {counter_where}", ephemeral=True)
 
 
 @bot.tree.command(name="ツムツム注文状況", description="現在処理中の注文を表示します")
