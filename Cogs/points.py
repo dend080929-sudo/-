@@ -37,6 +37,23 @@ def _ranking_text() -> str:
     return "**ポイントランキング**\n" + "\n".join(lines)
 
 
+async def _user_info_admin_check(interaction: discord.Interaction) -> bool:
+    """Discord管理者・設定済み管理者ロール・Botオーナーを許可する。"""
+    permissions = getattr(interaction.user, "guild_permissions", None)
+    if permissions and (permissions.administrator or permissions.manage_guild):
+        return True
+    try:
+        from main import has_admin_role
+        if has_admin_role(interaction.user):
+            return True
+    except Exception as exc:
+        print(f"ユーザー情報の管理者判定に失敗しました: {type(exc).__name__}: {exc}")
+    try:
+        return await interaction.client.is_owner(interaction.user)
+    except Exception:
+        return False
+
+
 class PointsPanelView(discord.ui.View):
     """購入者がコマンドを入力せずに使える永続ボタンパネル。"""
 
@@ -181,21 +198,28 @@ class PointsCog(commands.Cog):
         await interaction.followup.send(_ranking_text(), ephemeral=True)
 
     @app_commands.command(name="ユーザー情報", description="管理者が指定ユーザーの購入・ポイント情報を確認します")
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.check(_user_info_admin_check)
     @app_commands.describe(member="確認するDiscordユーザー")
     async def user_info(self, interaction: discord.Interaction, member: discord.Member):
         await ensure_deferred(interaction, ephemeral=True)
-        info = get_user_info(member.id)
+        try:
+            info = get_user_info(member.id)
+        except Exception as exc:
+            print(f"ユーザー情報の読み込みに失敗しました: user={member.id} {type(exc).__name__}: {exc}")
+            await interaction.followup.send(
+                "ユーザー情報を読み込めませんでした。少し時間を置いて再試行してください。", ephemeral=True
+            )
+            return
         embed = discord.Embed(
             title="ユーザー情報",
             description=f"{member.mention}\n表示名: `{member.display_name}`\nユーザーネーム: `{member.name}`\nDiscord ID: `{member.id}`",
             color=discord.Color.blue(),
             timestamp=discord.utils.utcnow(),
         )
-        embed.add_field(name="保有ポイント", value=f"**{info.get('points', 0)}ポイント**", inline=True)
-        embed.add_field(name="購入回数", value=f"**{info.get('purchase_count', 0)}回**", inline=True)
-        embed.add_field(name="累計支払額", value=f"**{info.get('total_paid_yen', 0):,}円**", inline=True)
-        embed.add_field(name="累計使用ポイント", value=f"**{info.get('total_points_used', 0):,}ポイント**", inline=True)
+        embed.add_field(name="保有ポイント", value=f"**{int(info.get('points', 0) or 0):,}ポイント**", inline=True)
+        embed.add_field(name="購入回数", value=f"**{int(info.get('purchase_count', 0) or 0):,}回**", inline=True)
+        embed.add_field(name="累計支払額", value=f"**{int(info.get('total_paid_yen', 0) or 0):,}円**", inline=True)
+        embed.add_field(name="累計使用ポイント", value=f"**{int(info.get('total_points_used', 0) or 0):,}ポイント**", inline=True)
         embed.add_field(name="招待リンク", value="発行済みリンクは参加時に自動判定", inline=True)
         embed.add_field(name="招待元", value=f"`{info.get('referred_by') or 'なし'}`", inline=True)
         purchases = info.get("purchases", [])[-10:]
