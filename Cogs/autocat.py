@@ -496,13 +496,16 @@ class AutoCatCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def autocat_install(self, interaction: discord.Interaction):
         if not _backend_ready():
-            await interaction.response.send_message("AutoCatの準備ができていません。", ephemeral=True)
+            if interaction.response.is_done():
+                await interaction.followup.send("AutoCatの準備ができていません。", ephemeral=True)
+            else:
+                await interaction.response.send_message("AutoCatの準備ができていません。", ephemeral=True)
             return
-        await interaction.response.send_message(
-            self._panel_text(),
-            view=AutoCatPanelView(self),
-            ephemeral=False,
-        )
+        view = AutoCatPanelView(self)
+        if interaction.response.is_done():
+            await interaction.followup.send(self._panel_text(), view=view, ephemeral=False)
+        else:
+            await interaction.response.send_message(self._panel_text(), view=view, ephemeral=False)
         try:
             await interaction.followup.send("パネルを設置しました。", ephemeral=True)
         except discord.HTTPException:
