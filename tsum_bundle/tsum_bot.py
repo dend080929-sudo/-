@@ -3410,6 +3410,8 @@ async def reset_menu_message(message):
 async def post_public_result(guild, user, action, val, amount, points_used=0):
     # 実績カウンター: 完了ごとに +1 して、指定チャンネル名へ反映を要求する。
     # （公開実績チャンネルの設定有無に関係なく常にカウントする）
+    # 投稿前の番号を表示する（にゃんこ側と同じ -00 形式）。
+    achievement_number = achievement_count()
     increment_achievement()
     request_achievement_update()
 
@@ -3439,6 +3441,7 @@ async def post_public_result(guild, user, action, val, amount, points_used=0):
     emb.description = (
         f"**ご利用者**\n**{user.mention}**\n"
         f"**注文内容**\n**{ticket_request_text(action, val)}**\n"
+        f"**実績番号**\n**-{achievement_number:02d}**\n"
         f"{payment_text}"
     )
     try:
