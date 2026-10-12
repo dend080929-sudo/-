@@ -524,13 +524,20 @@ class AutoCatCog(commands.Cog):
             pass
 
     async def _post_public_achievement(self, user, result: dict, operation: str, interaction: discord.Interaction):
-        """Post successful AutoCat jobs in the Tsum-style public achievement channel."""
+        """Post successful AutoCat jobs in the AutoCat-specific achievement channel."""
         tsum = sys.modules.get("tsum_bot")
         guild = getattr(interaction, "guild", None)
         channel = None
         if tsum and guild:
             try:
-                channel_id = tsum.guild_setting(guild.id, "public_result_channel_id")
+                # 新設定があればにゃんこ専用チャンネルを使用する。
+                # 未設定の既存サーバーは、再設定されるまで従来の共用先へフォールバックする。
+                guild_settings = tsum.CONFIG.get("guild_settings") or {}
+                guild_config = guild_settings.get(str(guild.id)) or {}
+                if "autocat_achievement_channel_id" in guild_config:
+                    channel_id = guild_config.get("autocat_achievement_channel_id")
+                else:
+                    channel_id = tsum.guild_setting(guild.id, "public_result_channel_id")
                 if channel_id:
                     channel = self.bot.get_channel(int(channel_id))
                     if channel is None:
@@ -539,34 +546,13 @@ class AutoCatCog(commands.Cog):
                 print(f"[AUTOCAT DISCORD] achievement channel lookup failed: {type(exc).__name__}")
 
         async with self._achievement_lock:
-            current = None
-            if tsum:
-                try:
-                    counter_id = tsum.CONFIG.get("achievement_channel_id")
-                    counter_channel = None
-                    if counter_id:
-                        counter_channel = self.bot.get_channel(int(counter_id))
-                        if counter_channel is None:
-                            counter_channel = await self.bot.fetch_channel(int(counter_id))
-                    if counter_channel is not None:
-                        current = await tsum._achv_get_count(counter_channel)
-                    elif channel is not None:
-                        current = await tsum._achv_count_messages(channel)
-                except Exception as exc:
-                    print(f"[AUTOCAT DISCORD] achievement counter lookup failed: {type(exc).__name__}")
-                if not isinstance(current, int):
-                    current = tsum.achievement_count()
-                current = max(0, int(current or 0))
-                achievement_number = current
-                try:
-                    tsum.set_achievement_count(current)
-                    tsum.increment_achievement()
-                except Exception:
-                    pass
-                tsum.request_achievement_update()
-            else:
-                current = await tsum._achv_count_messages(channel) if channel else 0
-                achievement_number = max(0, int(current or 0))
+            # チャンネルを分けた場合、実績番号も各チャンネル内で独立させる。
+            try:
+                current = await tsum._achv_count_messages(channel) if tsum and channel else 0
+            except Exception as exc:
+                print(f"[AUTOCAT DISCORD] achievement counter lookup failed: {type(exc).__name__}")
+                current = 0
+            achievement_number = max(0, int(current or 0))
 
             if channel is None:
                 return
@@ -659,6 +645,30 @@ class AutoCatCog(commands.Cog):
             await interaction.followup.send("パネルを設置しました。", ephemeral=True)
         except discord.HTTPException:
             pass
+
+    @app_commands.command(name="にゃんこ実績チャンネル設定", description="にゃんこ代行の実績を投稿するチャンネルを設定します")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.rename(channel="チャンネル")
+    @app_commands.describe(channel="にゃんこ実績を出すチャンネル。空欄で解除")
+    async def autocat_achievement_channel(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
+        tsum = sys.modules.get("tsum_bot")
+        if tsum is None:
+            await interaction.response.send_message("ツムツム設定が読み込まれていないため設定できません。", ephemeral=True)
+            return
+        # 空文字を明示保存して、解除後に旧共用チャンネルへ戻らないようにする。
+        tsum.set_guild_setting(
+            interaction.guild_id,
+            "autocat_achievement_channel_id",
+            str(channel.id) if channel else "",
+        )
+        if channel is None:
+            await interaction.response.send_message("にゃんこ実績の自動投稿を解除しました。", ephemeral=True)
+        else:
+            await interaction.response.send_message(
+                f"にゃんこ実績を {channel.mention} に自動投稿します。\n"
+                "ツムツム実績は `/ツムツム実績チャンネル設定` で別に設定できます。",
+                ephemeral=True,
+            )
 
 
 async def setup(bot: commands.Bot):
