@@ -557,15 +557,16 @@ class AutoCatCog(commands.Cog):
                 if not isinstance(current, int):
                     current = tsum.achievement_count()
                 current = max(0, int(current or 0))
+                achievement_number = current
                 try:
                     tsum.set_achievement_count(current)
-                    achievement_number = int(tsum.increment_achievement())
+                    tsum.increment_achievement()
                 except Exception:
-                    achievement_number = current + 1
+                    pass
                 tsum.request_achievement_update()
             else:
                 current = await tsum._achv_count_messages(channel) if channel else 0
-                achievement_number = max(0, int(current or 0)) + 1
+                achievement_number = max(0, int(current or 0))
 
             if channel is None:
                 return
