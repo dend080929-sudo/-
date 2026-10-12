@@ -585,6 +585,19 @@ class AutoCatCog(commands.Cog):
             )
             try:
                 await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                # ツムツム側と同じく、投稿後のメッセージ件数をチャンネル名末尾に表示する。
+                # 形式は最低2桁の -00。チャンネル名変更権限が無くても実績投稿自体は成功扱いにする。
+                count = await tsum._achv_count_messages(channel) if tsum else None
+                if isinstance(count, int):
+                    base_name = tsum._achv_base_name(channel.name) if tsum else channel.name
+                    new_name = f"{base_name}-{count:02d}"
+                    if channel.name != new_name:
+                        try:
+                            await channel.edit(name=new_name, reason="にゃんこ実績カウンター更新")
+                        except discord.Forbidden:
+                            print("[AUTOCAT DISCORD] achievement channel rename forbidden")
+                        except discord.HTTPException as rename_exc:
+                            print(f"[AUTOCAT DISCORD] achievement channel rename failed: {getattr(rename_exc, 'status', '?')}")
             except Exception as exc:
                 print(f"[AUTOCAT DISCORD] achievement post failed: {type(exc).__name__}")
 
