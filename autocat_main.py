@@ -114,7 +114,13 @@ MAX_CHAR_LIST = 300          # char_list の最大要素数
 MAX_CHARACTER_SETTINGS = 1000  # レアリティ単位・全871体の名前選択に対応
 MAX_COUNT = 5                # 作成/複製の最大個数
 MAX_LEGEND_SELECTIONS = 5000 # レジェンド系の章/星/ステージ選択数上限
-AUTOCAT_ITEM_PRICE_YEN = 50  # 無料3回終了後の1項目あたり料金
+try:
+    AUTOCAT_ITEM_PRICE_YEN = int(os.getenv("AUTOCAT_ITEM_PRICE_YEN", "50"))
+except (TypeError, ValueError):
+    AUTOCAT_ITEM_PRICE_YEN = 50
+if not 1 <= AUTOCAT_ITEM_PRICE_YEN <= 100000:
+    print("[AUTOCAT BILLING] invalid AUTOCAT_ITEM_PRICE_YEN; using 50")
+    AUTOCAT_ITEM_PRICE_YEN = 50
 
 # にゃんこ大戦争 JP 15.5.1。通信・新規作成・複製・ゲームデータ参照で
 # 別々の値を使うと、新キャラ枠や第四形態の判定が旧版へ戻るため一元管理する。
@@ -300,6 +306,8 @@ BCSFE_EDIT_LOCK = threading.RLock()
 
 app = Flask(__name__, template_folder="HTML")
 app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(32))
+AUTOCAT_INTERNAL_TOKEN = secrets.token_urlsafe(32)
+app.config["AUTOCAT_INTERNAL_TOKEN"] = AUTOCAT_INTERNAL_TOKEN
 # VIPのイベント詳細は、全選択時に数千ステージ分の指定を送る。
 # 64KBでは正常な操作でも413になるため、既存機能が収まる上限へ更新する。
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
@@ -6215,14 +6223,17 @@ def inject_infra_credit(response):
 @app.route("/")
 @limiter.limit("5 per second")
 def index():
-    user = current_site_user()
-    if user and user.get("is_vip"):
-        return redirect("/vip")
-    response = app.make_response(render_template(
-        "index.html", user=user, discord_user=current_user(), discord_is_admin=is_admin_user()
-    ))
-    response.headers["Cache-Control"] = "private, no-store"
-    response.headers["Vary"] = "Cookie"
+    response = app.make_response("""
+    <!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>AutoCat Discord自販機</title>
+    <body style="font-family:sans-serif;background:#10131a;color:#f3f4f6;max-width:720px;margin:12vh auto;padding:24px;line-height:1.8">
+    <h1>AutoCat Discord自販機</h1>
+    <p>注文・項目選択・コード入力・お支払いはDiscord内で行います。</p>
+    <p>Discordサーバーで <strong>/にゃんこ代行</strong> を実行するか、設置済みの注文パネルを押してください。</p>
+    <p>初回成功3回まで無料。以降は1項目50円です。支払いは共通ポイントまたはPayPayです。</p>
+    </body></html>
+    """)
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 

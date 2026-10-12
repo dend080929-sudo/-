@@ -25,8 +25,8 @@
 ## 全体構成
 
 - `main.py`がDiscord BotとFlask Webサーバーを起動します。
-- `main.py`は5つのCog（PayPay、自販機、Kyash、メール、ポイント）と`tsum_bundle/`のツムツム機能を**同じDiscord Botインスタンス**に登録します。通常のデプロイではDiscord Bot Tokenをひとつ使います。
-- にゃんこ大戦争用Webアプリは`autocat_main.py`から読み込まれ、公開パス`/autocat`にマウントされます。
+- `main.py`はPayPay、自販機、Kyash、メール、ポイント、AutoCat Discord自販機のCogと`tsum_bundle/`のツムツム機能を**同じDiscord Botインスタンス**に登録します。通常のデプロイではDiscord Bot Tokenをひとつ使います。
+- `autocat_main.py`はAutoCatの処理エンジン/APIです。利用者はWeb画面を使わず、Discord内のパネルで注文します。`/autocat/`はDiscordでの利用案内だけを表示します。
 - Webサーバーの`/healthz`はRender用ヘルスチェックです。既定の待受ポートは`10000`で、`PORT`環境変数があればそちらを使います。
 - DockerイメージにはTorを含み、`start.sh`が既定でTor SOCKS（`127.0.0.1:9050`）とBot/Webプロセスを起動します。
 - 依存パッケージは`requirements.txt`に記載し、Python 3.12を基準にしています。
@@ -41,18 +41,20 @@
 - 定期お知らせの設定、確認、テスト送信、解除
 - OAuthユーザー情報の手動バックアップと、一括サーバー参加処理
 - 管理者によるBot発言、チャンネル再作成
-- `/autocat`に統合したWebアプリと、`/healthz`ヘルスチェック
+- Discord内で完結するAutoCat注文パネルと、`/healthz`ヘルスチェック
 - Cloudflare Workerから受け取る受信メールWebhook
 
 **本体コマンド**
 
-`/設定`、`/チケット設置`、`/認証設置`、`/お知らせ設定`、`/お知らせ確認`、`/お知らせテスト`、`/お知らせ解除`、`/バックアップ`、`/一括呼び戻し`、`/発言`、`/ヘルプ`、`/にゃんこ代行`、`/チャンネル再作成`
+`/設定`、`/チケット設置`、`/認証設置`、`/お知らせ設定`、`/お知らせ確認`、`/お知らせテスト`、`/お知らせ解除`、`/バックアップ`、`/一括呼び戻し`、`/発言`、`/ヘルプ`、`/にゃんこ代行`、`/にゃんこ自販機設置`（管理者）、`/チャンネル再作成`
 
 ### AutoCat JP 代行課金
 
-- 利用者の認証と無料利用回数はDiscord OAuthユーザーIDで管理します。サイト独自アカウント登録・Discord連携は代行利用に不要です。
+- `/にゃんこ代行`で本人専用の注文画面を開くか、管理者が`/にゃんこ自販機設置`でチャンネルに共有パネルを設置します。各利用者はDiscordアカウントIDで識別され、OAuthやサイト独自アカウント登録は不要です。
+- Discord内でサービス（引き継ぎコード代行／新規作成／複製）、基本項目、引き継ぎコードと認証番号を入力し、支払いを選択して注文します。結果は注文者本人のDiscord DMへ送ります。引き継ぎコード・認証番号はDMで送らず、注文時のDiscordモーダルに入力してください。
+- Discordパネルの基本カタログは固定値の項目が対象です。新規作成・複製の個数は1〜2で指定できます。キャラ個別指定・アイテム数量指定・詳細ステージ/VIP編集などの高度な設定はDiscordパネルでは提供しません。
 - 通常利用者は初回3回まで無料（代行・作成・複製を合算、失敗時は回数を返却）。以後は選択項目数×50円です。作成は出力アカウント数分、複製は複製数分を計上します。
-- 支払いは共通ポイント（1ポイント=1円）またはPayPay。ポイントはDiscordログイン中の同じDiscord IDから予約し、処理成功で確定、失敗時に返却します。PayPayはリンク金額を照合して受領し、失敗時は管理者へ手動返金依頼を送ります。
+- 支払いは共通ポイント（1ポイント=1円）またはPayPay。ポイントは注文者のDiscord IDから予約し、処理成功で確定、失敗時に返却します。PayPayは注文画面のモーダルへリンクを入力し、金額を照合して受領します。失敗時は管理者へ手動返金依頼を送ります。
 - VIPは`AUTOCAT_VIP_GUILD_ID`のサーバーで`AUTOCAT_VIP_ROLE_ID`を持つユーザーです。Discord APIで確認し、VIPは無料利用（単価請求なし）となります。支払い確認後に管理者がDiscord上でロールを付与・解除してください。Discord API障害や設定不足時はVIPを認めません。
 - 無料回数・PayPay使用済みリンク・返金依頼の永続台帳はGoogle Sheetsに保存し、RenderではSheets設定と固定の識別鍵が必要です。AutoCatの代行会計はサイトアカウントDBに依存しません。
 
@@ -103,28 +105,29 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 
 コマンド：`/ツムツムパネル設置`、`/ツムツムパネル再設置`、`/ツムツム料金読込`、`/ツムツム料金設定`、`/ツムツム無料代行`、`/ツムツムチケットカテゴリー`、`/ツムツムチケットチャンネル設定`、`/ツムツム実績チャンネル設定`、`/ツムツム実績カウンター設定`、`/ツムツム実績カウント設定`、`/ツムツム実績カウント`、`/ツムツム注文状況`、`/ツムツムコマンド禁止`、`/ツムツムコマンド許可`、`/ツムツム無料無制限`、`/ツムツムpaypayログイン`、`/ツムツムpaypayotp`、`/ツムツムpaypay状態`、`/ツムツムpaypayログアウト`、`/ツムツム収益`、`/ツムツム収益リセット`、`/ツムツム状態`、`/ツムツムログイン確認`、`/ツムツムサーバー貸し出し`、`/ツムツム貸出パネル設置`、`/ツムツム貸出料金設定`、`/ツムツムヘルプ`、`/ツムツムコマンド一覧`、`/ツムツム自分のサーバー登録`、`/ツムツム貸出ログチャンネル設定`
 
-### AUTOCAT JP Webアプリ（`autocat_main.py`, `HTML/`, `static/`, `ACCOUNT/`, `CHAT/`）
+### AutoCat Discord自販機・管理機能（`Cogs/autocat.py`, `autocat_main.py`）
 
-- にゃんこ大戦争アカウントの代行・新規作成・複製処理とジョブ状況確認
-- 初回3回無料（成功時のみ消費）、以後は項目ごとの従量課金、VIP向け画面・購入申請、利用状況・管理ページ
-- Discord OAuthログイン、サイトアカウント登録、VIP購入チケット/管理画面
-- AUTOCATチャット、DM、モデレーション、Web Push
-- ゲーム/キャラクターメタデータを使う画面とアクセス制御
+- Discord View/Modalでサービス・基本項目を選び、コード入力、支払方法選択、結果DMまで行います。
+- `/にゃんこ代行`は本人専用パネル、`/にゃんこ自販機設置`（管理者）は共有注文パネルを設置します。
+- 引き継ぎ代行・新規作成・複製に対応。初回3回無料、以降1項目50円、共通ポイントまたはPayPay、Discord VIPロール対応。
+- PayPay返金依頼の管理画面記録とGoogle Sheets会計台帳を維持します。
+- 高度なキャラ個別指定・数量指定・詳細ステージ編集は利用者向け注文から外しています。
 
-サイトは`/autocat/`以下に配置されます。主要画面は`/autocat/`、`/autocat/vip`、`/autocat/vip-guide`、`/autocat/chat`、`/autocat/account`、`/autocat/account/login`、`/autocat/account/register`、`/autocat/admin/panel`です。画面・APIの詳細は`autocat_main.py`、`ACCOUNT/`、`CHAT/`と`HTML/`を参照してください。
+`/autocat/`はDiscordで注文する案内画面です。PayPay返金記録等の管理者専用ページは残しています。ゲーム処理APIは`autocat_main.py`にあります。
 
 ## リポジトリ構成
 
 ```text
 .
 ├── main.py                     # Discord Bot + 公開Flaskアプリ
-├── autocat_main.py             # AUTOCAT JPゲーム/Webアプリ
+├── autocat_main.py             # AUTOCATゲーム処理/API/管理機能
+├── Cogs/autocat.py             # Discord内AutoCat注文・決済パネル
 ├── requirements.txt            # Python依存関係
 ├── Dockerfile                  # Python 3.12 + Torを含むコンテナ
 ├── start.sh                    # TorとBot/Webの起動・停止
 ├── persistent_store.py         # Google Sheets + JSONフォールバックストア
 ├── interaction_guard.py        # Discord Interactionの応答保護
-├── Cogs/                       # PayPay、自販機、Kyash、メール、ポイント
+├── Cogs/                       # PayPay、自販機、Kyash、メール、ポイント、AutoCat
 ├── tsum_bundle/                # ツムツム一式と設定テンプレート
 ├── ACCOUNT/                    # Webサイトアカウント・VIP・購入チケット
 ├── CHAT/                       # 公開チャット・DM・管理・DB
@@ -154,7 +157,7 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 3. **Server Members Intent**と**Message Content Intent**を有効にします。Botは`discord.Intents.default()`にこれらを設定しています。
 4. Botをサーバーへ招待し、スラッシュコマンド登録に必要な`applications.commands`スコープを含めます。
 5. Botに必要な権限を付けます。機能によって、チャンネル表示/送信、Embed、ロール管理（Botロールを対象ロールより上位にする）、チャンネル管理、招待作成/管理、メンバー取得などが必要です。運用では必要な機能に絞って権限を付与してください。
-6. OAuthを利用する場合はDiscord OAuth2設定に、後述の`REDIRECT_URI`（本体認証）と`DISCORD_REDIRECT_URI`（AUTOCAT）をそれぞれ登録します。Renderでは通常、Render公開URLを使います。
+6. OAuthはDiscord Bot本体の認証機能で使う場合だけ設定します。AutoCat注文・VIPロール判定はDiscord内で行うため、AutoCat利用者向けOAuth設定は不要です。
 
 ## 環境変数
 
@@ -165,12 +168,12 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 | 変数 | 必須 | 既定値 / 説明 |
 |---|---:|---|
 | `DISCORD_BOT_TOKEN` | はい | 起動する共有Discord BotのToken。秘密値。|
-| `DISCORD_GUILD_ID` | 推奨 | コマンド同期先のサーバーID。`0`/未設定ならグローバル同期になり、反映が遅れる場合があります。AUTOCATの`VIP_GUILD_ID`既定値にも使われます。|
+| `DISCORD_GUILD_ID` | 推奨 | コマンド同期先のサーバーID。`0`/未設定ならグローバル同期になり、反映が遅れる場合があります。AUTOCATのVIPサーバーID既定値にも使われます。|
 | `DISCORD_CLIENT_ID` | OAuth利用時 | Discord Application ID。|
 | `DISCORD_CLIENT_SECRET` | OAuth利用時 | Discord OAuth2 Client Secret。秘密値。|
-| `RENDER_EXTERNAL_URL` | Renderでは自動 | Renderが設定する公開URL。ある場合、本体の`/callback`およびAUTOCATの`/autocat/auth/callback`を組み立てます。|
+| `RENDER_EXTERNAL_URL` | Renderでは自動 | Renderが設定する公開URL。本体の`/callback`等を組み立てます。|
 | `REDIRECT_URI` | Render以外の本体OAuth | `RENDER_EXTERNAL_URL`がないときの本体Bot認証コールバック。通常は`https://<公開ホスト>/callback`。ローカル既定値は`http://localhost:8080/callback`。|
-| `DISCORD_REDIRECT_URI` | Render以外のAUTOCAT OAuth | AUTOCATのOAuthコールバック。通常は`https://<公開ホスト>/autocat/auth/callback`。Render公開URLがあると自動設定されます。|
+| `DISCORD_REDIRECT_URI` | 旧Web機能のみ | 旧AutoCat OAuth画面を使用する場合のコールバック。Discord自販機注文には不要です。|
 | `PORT` | 任意 | Flaskの待受ポート。既定`10000`。Renderが自動設定します。|
 | `SPREADSHEET_NAME` | 任意 | Googleスプレッドシート名。既定`DiscordVendingDB`。|
 | `GOOGLE_CREDENTIALS_JSON` | Sheets利用時 | サービスアカウントJSON**全体**を文字列で設定。秘密値。対象シートをサービスアカウントのメールアドレスへ共有します。|
@@ -180,18 +183,15 @@ Kyashログインと認証コードによる認証を扱います。コマンド
 | `LOG_CHANNEL_ID` | 任意 | 実績・ログチャンネルIDの初期値。既定`0`。|
 | `RUNTIME_DATA_DIR` | 推奨 | AUTOCATのSQLite DB・バックアップ・本体の定期告知設定などの保存先。既定`/tmp/discord-bot-data`。永続ディスクを使う場合はマウント先を設定します。|
 
-### AUTOCAT JP Webアプリ
+### AutoCat Discord自販機・処理エンジン
 
 | 変数 | 必須 | 既定値 / 説明 |
 |---|---:|---|
-| `PUBLIC_BASE_URL` | 外部URL利用時 | AUTOCATの公開URL。Renderでは`RENDER_EXTERNAL_URL`から自動補完。未設定時のコード既定値は`https://autocat.jp`。末尾`/`は除去されます。|
+| `PUBLIC_BASE_URL` | 旧Web機能のみ | 旧AUTOCAT Web画面の公開URL。Discord自販機注文には不要です。|
 | `AUTOCAT_VIP_GUILD_ID` | AutoCat VIP利用時に必須 | VIPロールを付与するDiscordサーバーID。未設定なら`VIP_GUILD_ID`、次に`DISCORD_GUILD_ID`を参照。|
 | `AUTOCAT_VIP_ROLE_ID` | AutoCat VIP利用時に必須 | 有料VIP利用者へ付与するDiscordロールID。Botが対象サーバーに参加している必要があります。ユーザーがこのロールを持つかDiscord APIで確認し、API障害時はVIP権限を付与しません。|
-| `VIP_PLAN_LABEL` | 任意 | Web画面のプラン表示名。既定`VIPプラン`。|
-| `VIP_PRICE_30` | 任意 | 30日プランの価格（円）。既定`300`。1〜1,000,000の整数。|
-| `VIP_PRICE_60` | 任意 | 60日プランの価格（円）。既定`600`。|
-| `VIP_PRICE_90` | 任意 | 90日プランの価格（円）。既定`900`。|
-| `VIP_PAYMENT_GUIDE` | 任意 | VIP購入ページに表示する支払い案内文。|
+| `AUTOCAT_ITEM_PRICE_YEN` | 任意 | 3回の無料利用後の1項目あたり単価（円）。既定50円、設定範囲1〜100,000円。|
+| `VIP_PLAN_LABEL` / `VIP_PRICE_*` / `VIP_PAYMENT_GUIDE` | 旧Web機能のみ | 旧Web VIPページ用。Discord自販機では管理者がVIPロールを付与します。|
 | `FLASK_SECRET_KEY` | **本番では必須** | Cookieセッション・内部暗号化に使うランダムで固定の秘密鍵。再起動をまたいで同じ値を使います。未設定時は互換用フォールバックがありますが、本番では明示してください。|
 | `SESSION_COOKIE_SECURE` | 任意 | `1`（既定）ならSecure Cookieを有効化。HTTPSを使わないローカル開発のみ`0`。|
 | `IDENTITY_HASH_KEY` | 推奨 | 無料利用者識別・招待等の安定したHMAC鍵。未設定なら`FLASK_SECRET_KEY`を使用。固定値を保つこと。|
@@ -390,10 +390,10 @@ Tsum設定ファイルが不要な環境ではSecret Fileの`-v`と`TSUM_BOT_CON
 ### Render Web Service
 
 1. GitHubリポジトリをRenderへ接続し、**Docker Web Service**としてデプロイします（Dockerfile/`start.sh`を使用）。
-2. Environment Variablesに必要なBot Token、OAuth、Google Sheets、管理者ID等を設定します。
+2. Environment VariablesにBot Token、Google Sheets、固定の識別鍵、管理者ID、AutoCat VIPロールID等を設定します。本体OAuthを使う場合のみOAuth情報も設定します。
 3. `tsum_bundle/tsum_settings.example.json`を元に本番用JSONを作り、Secret File（例`/etc/secrets/tsum_settings.json`）として登録します。`TSUM_BOT_CONFIG=/etc/secrets/tsum_settings.json`を環境変数に設定します。
 4. Health Check Pathを`/healthz`にします。Renderが`PORT`を設定し、アプリは`0.0.0.0:$PORT`で待ち受けます。
-5. Discord OAuth2 Redirect URLに公開URLの`/callback`と`/autocat/auth/callback`を登録します。
+5. 本体OAuth認証を使う場合は公開URLの`/callback`をDiscord Developer Portalへ登録します。AutoCatのDiscord内注文にOAuth Callbackは不要です。
 6. 初回起動後はRender LogsでCog読み込み、Tor経路確認、Webhook/Sheets接続エラーを確認します。
 
 **永続ディスクと一時ファイル：** `RUNTIME_DATA_DIR`配下にはAUTOCATのSQLite DB、管理バックアップ、本体の告知設定などが置かれます。これらを再起動後も保持したい場合は、ホスティングサービスの永続ディスクをマウントし、そのマウント先を`RUNTIME_DATA_DIR`に設定します。ツムツムの一部セッション/JSONファイルとローカルJSONフォールバックは`/app`配下にも作成され、`RUNTIME_DATA_DIR`だけでは移動されません。永続化が必要なデータのバックアップを別途設計してください。
@@ -404,7 +404,7 @@ Tsum設定ファイルが不要な環境ではSecret Fileの`-v`と`TSUM_BOT_CON
 2. `/設定`でメンバー・スタッフ・管理者ロールとログチャンネルを登録します（管理者権限が必要）。
 3. `/チケット設置`と`/認証設置`で必要なパネルを設置します。
 4. 必要に応じ`/ポイントパネル設置`、`/メールパネル設置`、`/有料自販機作成`、`/ツムツムパネル設置`を実行します。
-5. AUTOCATのロール/購入/VIP等の動作に関わるID・料金は、Web側の設定とEnvironment Variablesも合わせて確認します。
+5. `/にゃんこ自販機設置`でAutoCatの共有注文パネルを設置します。`AUTOCAT_VIP_GUILD_ID`と`AUTOCAT_VIP_ROLE_ID`を設定し、VIPは管理者がDiscord内でロールを付与します。
 6. `/ヘルプ`、`/ツムツムヘルプ`で利用者向けのコマンド案内を確認します。
 
 本体の管理コマンドはDiscord管理者権限または`/設定`で登録した管理者ロールを確認します。Cogごとに`utils.py`等の追加チェックがあります。ツムツムは`allowed_user_ids`、Botオーナー/管理権限などのチェックがあり、`/ツムツムヘルプ`は公開コマンドです。

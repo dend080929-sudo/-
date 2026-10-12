@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import hmac
 from typing import Callable
 from urllib.parse import urlsplit
 
@@ -77,7 +78,30 @@ def register_access_guard(app, store: AccountStore, real_ip: Callable[[], str], 
         if result["blocked"]:
             session.pop(_SESSION_FINGERPRINT, None)
             return _redirect_to_blacklist()
+
+        # Discord orders originate inside this process rather than a browser.
+        # Permit only the narrowly scoped API routes when they carry the
+        # per-process capability token; keep the global-ban check above active.
+        internal_token = str(app.config.get("AUTOCAT_INTERNAL_TOKEN") or "")
+        supplied_token = request.headers.get("X-AutoCat-Internal", "")
+        internal_routes = {
+            "/api/get_key", "/api/free/status", "/api/run_daiko",
+            "/api/run_create", "/api/run_clone",
+        }
+        is_job_poll = path.startswith("/api/job/") and request.method == "GET"
+        if (
+            internal_token
+            and path in internal_routes | ({path} if is_job_poll else set())
+            and supplied_token
+            and hmac.compare_digest(supplied_token, internal_token)
+        ):
+            return None
         if fingerprint:
+            if path in {"/api/run_daiko", "/api/run_create", "/api/run_clone"}:
+                return jsonify({
+                    "error": "AutoCatの注文はDiscordの自販機パネルから行ってください。",
+                    "code": "discord_panel_required",
+                }), 410
             return None
 
         if request.method in {"GET", "HEAD"} and request.accept_mimetypes.accept_html:

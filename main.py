@@ -151,7 +151,7 @@ async def setup_hook():
         ("points_and_referrals", "points_and_referrals.json"),
     ])
     # 本体側の自販機機能と有料自販機Cogを読み込む
-    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog", "Cogs.mail", "Cogs.netflix_panel", "Cogs.points"]
+    extensions = ["Cogs.paypay", "Cogs.vending", "Cogs.kyash_cog", "Cogs.mail", "Cogs.netflix_panel", "Cogs.points", "Cogs.autocat"]
     for extension in extensions:
         try:
             await bot.load_extension(extension)
@@ -851,42 +851,20 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="💬 発言機能", value="`/発言` - ボットに指定した言葉を喋らせます。", inline=False)
     embed.add_field(name="✉️ メール機能", value="`/メールパネル設置` - メールアドレス発行パネルを設置します。Gmailの4桁エイリアスにも対応しています。", inline=False)
     embed.add_field(name="🎁 ポイント・友達招待", value="`/ポイントパネル設置`（管理者）- 客がボタンで使える説明パネルを設置\n`/ポイント`・`/ポイント履歴` - 残高や履歴を確認\n`/招待リンク` - Discord招待リンクを発行（参加時に自動登録）\n`/ポイントランキング` - ランキングを表示\n`/ユーザー情報`（管理者）- 購入・支払額・ポイント・招待情報を確認\n※購入確認画面の「ポイントを使う」から1ポイント＝1円で値引き可能", inline=False)
-    embed.add_field(name="🐱 にゃんこ代行", value="`/にゃんこ代行` - 完全版の代行画面を開きます。引き継ぎコード・認証番号・各種設定をWeb画面で指定できます。", inline=False)
+    embed.add_field(name="🐱 にゃんこ代行", value="`/にゃんこ代行` - Discord内の注文パネルを開きます。項目選択・コード入力・ポイント/PayPay決済・結果受取までDiscord内で行えます。管理者は`/にゃんこ自販機設置`で共有パネルを設置できます。", inline=False)
     embed.add_field(name="💾 バックアップ＆呼び出し", value="`/バックアップ` - メンバーデータを手動でバックアップし、登録人数を表示します。\n`/一括呼び戻し` - 登録されている全ユーザーをサーバーに一斉呼び戻しします。", inline=False)
     embed.add_field(name="💥 チャンネル管理", value="`/チャンネル再作成` - 現在のチャンネルを初期化（作り直し）します。", inline=False)
     
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-class AutocatLinkView(discord.ui.View):
-    def __init__(self, base_url: str):
-        super().__init__(timeout=None)
-        self.add_item(discord.ui.Button(label="にゃんこ代行画面を開く", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/"))
-        self.add_item(discord.ui.Button(label="Discordログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/autocat/"))
-        self.add_item(discord.ui.Button(label="VIP管理画面ログイン", style=discord.ButtonStyle.link, url=f"{base_url}/autocat/auth/login?next=/autocat/admin/vip"))
-
-
-@bot.tree.command(name="にゃんこ代行", description="完全版のにゃんこ大戦争代行画面を開きます")
+@bot.tree.command(name="にゃんこ代行", description="Discord内の自販機パネルからにゃんこ代行を注文します")
 async def autocat_link(interaction: discord.Interaction):
-    await ensure_deferred(interaction, ephemeral=True)
-    if AUTOCAT_APP is None:
-        await interaction.followup.send("代行機能の準備に失敗しています。Renderのログと依存関係を確認してください。", ephemeral=True)
+    cog = bot.get_cog("AutoCatCog")
+    if cog is None:
+        await interaction.response.send_message("AutoCat Discord自販機の準備に失敗しています。管理者へ連絡してください。", ephemeral=True)
         return
-    base_url = (os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
-    if not base_url:
-        await interaction.followup.send("RENDER_EXTERNAL_URLまたはPUBLIC_BASE_URLが未設定です。", ephemeral=True)
-        return
-    panel_message = await interaction.followup.send(
-        "完全版のにゃんこ代行画面です。ログイン後、引き継ぎコード・認証番号・各種設定を入力できます。",
-        view=AutocatLinkView(base_url),
-        ephemeral=False,
-        wait=True,
-    )
-    try:
-        await panel_message.pin(reason="にゃんこ代行の固定パネル")
-    except (discord.Forbidden, discord.HTTPException):
-        # ピン留め権限がない場合でも、公開パネル自体は残す。
-        pass
+    await cog.show_panel(interaction, public=False)
 
 @bot.tree.command(name="チャンネル再作成", description="現在のチャンネルを削除し、同じ設定の新しいチャンネルに作り直します。")
 @app_commands.checks.has_permissions(administrator=True)
