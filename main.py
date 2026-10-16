@@ -6,6 +6,7 @@ import shutil
 import threading
 import time
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime
 from flask import Flask, request
@@ -966,9 +967,46 @@ async def nuke(interaction: discord.Interaction):
 # -------------------------------------------------------------
 # 起動処理
 # -------------------------------------------------------------
+def run_discord_bot():
+    """Keep the Render process alive when Discord temporarily rate-limits login."""
+    token = os.environ["DISCORD_BOT_TOKEN"]
+
+    while True:
+        try:
+            bot.run(token)
+            return
+        except discord.HTTPException as exc:
+            # Discord can return a global 429 during login.  Letting this
+            # escape makes Render restart the container immediately, which
+            # repeats the request and can extend the block indefinitely.
+            if exc.status != 429:
+                raise
+
+            retry_after = getattr(exc, "retry_after", None)
+            try:
+                wait_seconds = float(retry_after)
+            except (TypeError, ValueError):
+                wait_seconds = 300.0
+
+            # Add a small cushion and avoid either a busy restart loop or an
+            # unexpectedly long sleep if Discord sends a malformed value.
+            wait_seconds = min(max(wait_seconds + 5.0, 60.0), 900.0)
+            print(
+                f"[discord] Login rate-limited (429); retrying in {wait_seconds:.0f}s.",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(wait_seconds)
+
+            # bot.run() closes its event loop when it raises.  Replace the
+            # process so the client and Flask thread are recreated cleanly,
+            # without returning a non-zero status to Render.
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+
+
 if __name__ == "__main__":
     t = threading.Thread(target=run_flask)
     t.daemon = True
     t.start()
 
-    bot.run(os.environ['DISCORD_BOT_TOKEN'])
+    run_discord_bot()
