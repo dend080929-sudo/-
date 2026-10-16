@@ -173,6 +173,7 @@ bot.setup_hook = setup_hook
 
 RUNTIME_DATA_DIR = os.path.abspath(os.environ.get("RUNTIME_DATA_DIR", "/tmp/discord-bot-data"))
 os.makedirs(RUNTIME_DATA_DIR, mode=0o700, exist_ok=True)
+DISCORD_RATE_LIMIT_FILE = os.path.join(RUNTIME_DATA_DIR, "discord_rate_limit.json")
 BACKUP_DIR = os.path.join(RUNTIME_DATA_DIR, "backups")
 ANNOUNCE_CONFIG_FILE = os.path.join(RUNTIME_DATA_DIR, "announce_config.json")
 _ANNOUNCE_SHEETS_BOOTSTRAPPED = False
@@ -609,6 +610,10 @@ class VerifyView(discord.ui.View):
 async def on_ready():
     global BOT_LOOP
     BOT_LOOP = asyncio.get_running_loop()
+    try:
+        os.remove(DISCORD_RATE_LIMIT_FILE)
+    except FileNotFoundError:
+        pass
     print(f"ログインしました: {bot.user.name} (ID: {bot.user.id})")
     
     try:
@@ -972,6 +977,23 @@ def run_discord_bot():
     token = os.environ["DISCORD_BOT_TOKEN"]
 
     while True:
+        # Keep the cooldown across an exec-based process replacement (and a
+        # normal Render restart) so a blocked token/IP is not hit repeatedly.
+        try:
+            with open(DISCORD_RATE_LIMIT_FILE, "r", encoding="utf-8") as fh:
+                rate_limit = json.load(fh)
+            cooldown_until = float(rate_limit.get("cooldown_until", 0))
+            remaining = cooldown_until - time.time()
+            if remaining > 0:
+                print(
+                    f"[discord] Rate-limit cooldown active; retrying in {remaining:.0f}s.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(remaining)
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            pass
+
         try:
             bot.run(token)
             return
@@ -990,9 +1012,30 @@ def run_discord_bot():
 
             # Add a small cushion and avoid either a busy restart loop or an
             # unexpectedly long sleep if Discord sends a malformed value.
-            wait_seconds = min(max(wait_seconds + 5.0, 60.0), 900.0)
+            try:
+                with open(DISCORD_RATE_LIMIT_FILE, "r", encoding="utf-8") as fh:
+                    previous = json.load(fh)
+                attempts = int(previous.get("attempts", 0)) + 1
+            except (FileNotFoundError, OSError, ValueError, TypeError):
+                attempts = 1
+
+            # Respect Discord's value, then grow the cooldown on repeated
+            # failures up to 30 minutes to prevent a persistent 429 storm.
+            wait_seconds = min(max(wait_seconds + 5.0, 60.0) * (2 ** (attempts - 1)), 1800.0)
+            try:
+                with open(DISCORD_RATE_LIMIT_FILE, "w", encoding="utf-8") as fh:
+                    json.dump(
+                        {
+                            "attempts": attempts,
+                            "cooldown_until": time.time() + wait_seconds,
+                        },
+                        fh,
+                    )
+            except OSError as state_error:
+                print(f"[discord] Could not persist rate-limit state: {state_error}", file=sys.stderr)
+
             print(
-                f"[discord] Login rate-limited (429); retrying in {wait_seconds:.0f}s.",
+                f"[discord] Login temporarily rate-limited; retrying in {wait_seconds:.0f}s.",
                 file=sys.stderr,
                 flush=True,
             )
