@@ -9,6 +9,7 @@ import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime
+from urllib.parse import urlparse
 from flask import Flask, request
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 import requests
@@ -901,15 +902,117 @@ async def force_join(interaction: discord.Interaction):
         ephemeral=True
     )
 
-@bot.tree.command(name="発言", description="ボットに指定した言葉を喋らせます。")
-@app_commands.describe(message="ボットに発言させたい言葉")
+class AnnouncementLinkView(discord.ui.View):
+    """お知らせパネルの下に表示するリンクボタン。"""
+
+    def __init__(self, buttons: list[tuple[str, str]]):
+        super().__init__(timeout=None)
+        for label, url in buttons:
+            self.add_item(discord.ui.Button(label=label, style=discord.ButtonStyle.link, url=url))
+
+
+def is_http_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+@bot.tree.command(name="発言", description="通常の発言、パネル、ボタン付きパネルを送信します。")
+@app_commands.describe(
+    message="通常の発言内容、またはパネル本文",
+    style="送信する形式（未指定の場合は通常の発言）",
+    title="パネルのタイトル（パネル形式のみ）",
+    button1_label="1つ目のボタン名（ボタン付きパネルのみ）",
+    button1_url="1つ目のリンクURL（ボタン付きパネルのみ）",
+    button2_label="2つ目のボタン名（ボタン付きパネルのみ）",
+    button2_url="2つ目のリンクURL（ボタン付きパネルのみ）",
+    button3_label="3つ目のボタン名（ボタン付きパネルのみ）",
+    button3_url="3つ目のリンクURL（ボタン付きパネルのみ）",
+    button4_label="4つ目のボタン名（ボタン付きパネルのみ）",
+    button4_url="4つ目のリンクURL（ボタン付きパネルのみ）",
+    button5_label="5つ目のボタン名（ボタン付きパネルのみ）",
+    button5_url="5つ目のリンクURL（ボタン付きパネルのみ）",
+)
+@app_commands.choices(style=[
+    app_commands.Choice(name="通常の発言", value="normal"),
+    app_commands.Choice(name="パネル", value="panel"),
+    app_commands.Choice(name="パネル + ボタン", value="panel_buttons"),
+])
 @app_commands.checks.has_permissions(administrator=True)
-async def say_command(interaction: discord.Interaction, message: str):
+async def say_command(
+    interaction: discord.Interaction,
+    message: str,
+    style: app_commands.Choice[str] = None,
+    title: str = None,
+    button1_label: str = None,
+    button1_url: str = None,
+    button2_label: str = None,
+    button2_url: str = None,
+    button3_label: str = None,
+    button3_url: str = None,
+    button4_label: str = None,
+    button4_url: str = None,
+    button5_label: str = None,
+    button5_url: str = None,
+):
     await ensure_deferred(interaction, ephemeral=True)
     if not has_admin_role(interaction.user):
         await interaction.followup.send("❌ 管理者権限が必要です。", ephemeral=True)
         return
-    await interaction.channel.send(message)
+
+    style_value = style.value if style else "normal"
+    if style_value == "normal" and len(message) > 2000:
+        await interaction.followup.send("通常の発言は2,000文字以内で入力してください。", ephemeral=True)
+        return
+    if style_value in {"panel", "panel_buttons"} and len(message) > 4096:
+        await interaction.followup.send("パネル本文は4,096文字以内で入力してください。", ephemeral=True)
+        return
+    if title and len(title) > 256:
+        await interaction.followup.send("パネルタイトルは256文字以内で入力してください。", ephemeral=True)
+        return
+
+    raw_buttons = [
+        (button1_label, button1_url),
+        (button2_label, button2_url),
+        (button3_label, button3_url),
+        (button4_label, button4_url),
+        (button5_label, button5_url),
+    ]
+    buttons = []
+    if style_value == "panel_buttons":
+        for index, (label, url) in enumerate(raw_buttons, start=1):
+            if not label and not url:
+                continue
+            if not label or not url:
+                await interaction.followup.send(
+                    f"{index}つ目のボタンは、ボタン名とリンクURLを両方指定してください。",
+                    ephemeral=True,
+                )
+                return
+            if len(label) > 80:
+                await interaction.followup.send(f"{index}つ目のボタン名は80文字以内で入力してください。", ephemeral=True)
+                return
+            if not is_http_url(url):
+                await interaction.followup.send(
+                    f"{index}つ目のリンクURLはhttp://またはhttps://で始まる有効なURLを指定してください。",
+                    ephemeral=True,
+                )
+                return
+            buttons.append((label, url))
+        if not buttons:
+            await interaction.followup.send(
+                "ボタン付きパネルには、少なくとも1つのボタン名とリンクURLを指定してください。",
+                ephemeral=True,
+            )
+            return
+
+    if style_value == "normal":
+        await interaction.channel.send(message)
+    else:
+        embed = discord.Embed(description=message, color=discord.Color.blurple())
+        if title:
+            embed.title = title
+        view = AnnouncementLinkView(buttons) if style_value == "panel_buttons" else None
+        await interaction.channel.send(embed=embed, view=view)
     await interaction.followup.send("✅ メッセージを送信しました。", ephemeral=True)
 
 @bot.tree.command(name="ヘルプ", description="ボットのコマンド一覧と使い方を表示します。")
